@@ -119,6 +119,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   color *= field * (0.26 + bloom * 0.62) * vignette;
   color += vec3(0.03, 0.08, 0.07) * (0.65 + fvMotion.w);
   color += (hash(fragCoord + iTime) - 0.5) * grain * 0.06;
+  color *= 0.35 + fvAmount * 0.75;
   fragColor = vec4(color, 1.0);
 }
 `
@@ -174,6 +175,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   color += center * rose * (0.65 + pulse);
   color *= smoothstep(1.6, 0.2, length(uv));
   color += vec3(0.015, 0.018, 0.03);
+  color *= 0.35 + fvAmount * 0.75;
   fragColor = vec4(color, 1.0);
 }
 `
@@ -222,6 +224,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec3 accent = vec3(1.0, 0.52, 0.24) * smoothstep(2.2, 6.8, field) * (0.25 + fvGestures.y);
   vec3 color = mix(low, high, light) + accent;
   color *= smoothstep(1.8, 0.16, length(uv));
+  color *= 0.35 + fvAmount * 0.75;
   fragColor = vec4(color, 1.0);
 }
 `

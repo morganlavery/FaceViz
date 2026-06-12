@@ -23,6 +23,7 @@ import {
   ScanFace,
   ScanLine,
   Settings2,
+  SlidersHorizontal,
   ShieldAlert,
   Sparkles,
   Star,
@@ -30,7 +31,16 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
-import { renderFrame } from "./rendering/compositor";
+import { renderFrame, type CompositorOptions } from "./rendering/compositor";
+import {
+  createDefaultShaderSettings,
+  getMotionSignalValue,
+  getShaderScene,
+  resolveShaderParameterValues,
+  shaderMotionSources,
+  shaderScenes,
+  type ShaderParameterSettings
+} from "./rendering/shaderPlayer";
 import {
   getSystemStatus,
   publishSystemOutputFrame,
@@ -44,7 +54,8 @@ import type { Handedness, Landmark, MotionFrame, PreviousHandSample } from "./tr
 
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
-type WorkspaceTab = "preview" | "signal";
+type WorkspaceTab = "preview" | "shader" | "signal";
+type VisualMode = "camera" | "shader";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
 type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
 type SignalNodePosition = {
@@ -79,6 +90,7 @@ const effects = [
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Preview" },
+  { id: "shader", label: "Shader" },
   { id: "signal", label: "Signal" }
 ];
 
@@ -182,12 +194,12 @@ export function App() {
   const outputLastSendAtRef = useRef(0);
   const outputFrameIntervalRef = useRef(1000 / 60);
   const outputTimerRef = useRef<number | null>(null);
-  const compositorOptionsRef = useRef({
+  const compositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
     selectedEffect: "auto"
   });
-  const outputCompositorOptionsRef = useRef({
+  const outputCompositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
     selectedEffect: "auto"
@@ -215,6 +227,11 @@ export function App() {
   const [outputError, setOutputError] = useState("");
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceTab>("preview");
+  const [visualMode, setVisualMode] = useState<VisualMode>("camera");
+  const [shaderSceneId, setShaderSceneId] = useState(shaderScenes[0].id);
+  const [shaderSettings, setShaderSettings] = useState<Record<string, ShaderParameterSettings>>(() =>
+    createDefaultShaderSettings(shaderScenes[0])
+  );
   const outputStatuses = useMemo(() => getOutputStatuses(), []);
   const displayOutputStatuses = outputStatuses.map((status) => {
     const systemOutput = systemStatus?.outputs.find((output) => output.target === status.target);
@@ -229,6 +246,11 @@ export function App() {
   const selectedPerformanceMode =
     outputPerformanceModes.find((performanceMode) => performanceMode.id === outputPerformanceMode) ??
     outputPerformanceModes[0];
+  const activeShaderScene = useMemo(() => getShaderScene(shaderSceneId), [shaderSceneId]);
+  const shaderValues = useMemo(
+    () => resolveShaderParameterValues(activeShaderScene, shaderSettings, motion),
+    [activeShaderScene, motion, shaderSettings]
+  );
 
   const stopCapture = useCallback(() => {
     runningRef.current = false;
@@ -498,14 +520,52 @@ export function App() {
     compositorOptionsRef.current = {
       showRig,
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
-      selectedEffect
+      selectedEffect,
+      visualMode,
+      shaderScene: activeShaderScene,
+      shaderParameters: shaderSettings
     };
     outputCompositorOptionsRef.current = {
       showRig: showRigInOutput,
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
-      selectedEffect
+      selectedEffect,
+      visualMode,
+      shaderScene: activeShaderScene,
+      shaderParameters: shaderSettings
     };
-  }, [effectAmount, reducedMotion, selectedEffect, showRig, showRigInOutput]);
+  }, [activeShaderScene, effectAmount, reducedMotion, selectedEffect, shaderSettings, showRig, showRigInOutput, visualMode]);
+
+  useEffect(() => {
+    setShaderSettings((current) => {
+      const defaults = createDefaultShaderSettings(activeShaderScene);
+      return Object.fromEntries(
+        activeShaderScene.parameters.map((parameter) => [
+          parameter.id,
+          current[parameter.id] ?? defaults[parameter.id]
+        ])
+      );
+    });
+  }, [activeShaderScene]);
+
+  const updateShaderSetting = useCallback((parameterId: string, patch: Partial<ShaderParameterSettings>) => {
+    setShaderSettings((current) => ({
+      ...current,
+      [parameterId]: {
+        ...current[parameterId],
+        ...patch
+      }
+    }));
+  }, []);
+
+  const selectWorkspace = useCallback((tab: WorkspaceTab) => {
+    setActiveWorkspace(tab);
+    if (tab === "preview") {
+      setVisualMode("camera");
+    }
+    if (tab === "shader") {
+      setVisualMode("shader");
+    }
+  }, []);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(renderLoop);
@@ -572,34 +632,36 @@ export function App() {
             <button
               key={tab.id}
               className={activeWorkspace === tab.id ? "workspace-tab active" : "workspace-tab"}
-              onClick={() => setActiveWorkspace(tab.id)}
+              onClick={() => selectWorkspace(tab.id)}
               type="button"
             >
-              {tab.id === "preview" ? <ScanFace size={15} /> : <Activity size={15} />}
+              {tab.id === "preview" ? <ScanFace size={15} /> : tab.id === "shader" ? <Sparkles size={15} /> : <Activity size={15} />}
               <span>{tab.label}</span>
             </button>
           ))}
         </nav>
 
         <section
-          className={activeWorkspace === "preview" ? "stage-panel" : "stage-panel preview-stage-hidden"}
-          aria-hidden={activeWorkspace !== "preview"}
+          className={activeWorkspace !== "signal" ? "stage-panel" : "stage-panel preview-stage-hidden"}
+          aria-hidden={activeWorkspace === "signal"}
         >
           <div className="stage-toolbar">
             <div className="hud-badge">
-              <span>Authority</span>
-              <strong>{selectedOutput?.label ?? "Output"}</strong>
+              <span>{visualMode === "shader" ? "Scene" : "Authority"}</span>
+              <strong>{visualMode === "shader" ? activeShaderScene.label : selectedOutput?.label ?? "Output"}</strong>
             </div>
             <div className="hud-badge align-right">
               <span>Mode</span>
-              <strong>{mode === "upper" ? "Upper Body" : "Full Body"}</strong>
+              <strong>{visualMode === "shader" ? "Mocap Shader" : mode === "upper" ? "Upper Body" : "Full Body"}</strong>
             </div>
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="FaceViz composited preview" />
-          {captureState !== "running" && <EmptyState captureState={captureState} cameraIssue={cameraIssue} />}
+          {visualMode === "camera" && captureState !== "running" && (
+            <EmptyState captureState={captureState} cameraIssue={cameraIssue} />
+          )}
         </section>
 
-        {activeWorkspace === "preview" ? (
+        {activeWorkspace !== "signal" ? (
           <>
             <section className="transport-row" aria-label="Capture controls">
               <button className={mode === "upper" ? "mode-button active" : "mode-button"} onClick={() => setMode("upper")}>
@@ -734,7 +796,85 @@ export function App() {
 
         <section className="rail-section">
           <div className="section-heading">
-            <span>Effects</span>
+            <span>Shader Player</span>
+            <SlidersHorizontal size={16} />
+          </div>
+          <div className="shader-scene-list">
+            {shaderScenes.map((scene) => (
+              <button
+                key={scene.id}
+                className={activeShaderScene.id === scene.id ? "shader-scene-button active" : "shader-scene-button"}
+                onClick={() => {
+                  setShaderSceneId(scene.id);
+                  setVisualMode("shader");
+                  setActiveWorkspace("shader");
+                }}
+                type="button"
+              >
+                <strong>{scene.label}</strong>
+                <span>{scene.detail}</span>
+              </button>
+            ))}
+          </div>
+          <div className="shader-param-stack">
+            {activeShaderScene.parameters.map((parameter, index) => {
+              const setting = shaderSettings[parameter.id] ?? {
+                value: parameter.defaultValue,
+                source: parameter.motionDefault,
+                depth: 0
+              };
+              const signalValue = getMotionSignalValue(setting.source, motion);
+              return (
+                <div className="shader-param" key={parameter.id}>
+                  <div className="shader-param-header">
+                    <span>{parameter.label}</span>
+                    <strong>{shaderValues[index].toFixed(2)}</strong>
+                  </div>
+                  <input
+                    type="range"
+                    min={parameter.min}
+                    max={parameter.max}
+                    step="0.01"
+                    value={setting.value}
+                    onChange={(event) => updateShaderSetting(parameter.id, { value: Number(event.target.value) })}
+                    aria-label={`${parameter.label} base value`}
+                  />
+                  <div className="shader-map-row">
+                    <select
+                      value={setting.source}
+                      onChange={(event) =>
+                        updateShaderSetting(parameter.id, { source: event.target.value as ShaderParameterSettings["source"] })
+                      }
+                      aria-label={`${parameter.label} motion source`}
+                    >
+                      {shaderMotionSources.map((source) => (
+                        <option key={source.id} value={source.id}>
+                          {source.label}
+                        </option>
+                      ))}
+                    </select>
+                    <span>{signalValue.toFixed(2)}</span>
+                  </div>
+                  <label className="shader-depth">
+                    <span>Depth</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.01"
+                      value={setting.depth}
+                      onChange={(event) => updateShaderSetting(parameter.id, { depth: Number(event.target.value) })}
+                    />
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rail-section">
+          <div className="section-heading">
+            <span>Camera Effects</span>
             <Sparkles size={16} />
           </div>
           <div className="effect-list">

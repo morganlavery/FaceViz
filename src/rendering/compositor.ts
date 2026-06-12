@@ -1,5 +1,5 @@
 import { pointToCanvas } from "../tracking/gestureEngine";
-import type { Landmark, MotionFrame, Vec2 } from "../tracking/types";
+import type { Landmark, MotionFrame, TrackedFace, Vec2 } from "../tracking/types";
 import {
   MotionShaderPlayer,
   resolveShaderParameterValues,
@@ -43,7 +43,7 @@ const POSE_CONNECTIONS = [
 const HAND_TIP_INDICES = [4, 8, 12, 16, 20];
 const HAND_GRAPHIC_ANCHORS = [0, 4, 8, 12, 16, 20];
 
-type CompositorOptions = {
+export type CompositorOptions = {
   showRig: boolean;
   effectAmount: number;
   selectedEffect: string;
@@ -90,6 +90,30 @@ const drawPoint = (ctx: CanvasRenderingContext2D, point: Vec2, radius: number, f
 const randomUnit = (seed: number) => {
   const value = Math.sin(seed * 12.9898) * 43758.5453;
   return value - Math.floor(value);
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const drawRoundedRect = (
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number
+) => {
+  const nextRadius = Math.min(radius, Math.abs(width) / 2, Math.abs(height) / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + nextRadius, y);
+  ctx.lineTo(x + width - nextRadius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + nextRadius);
+  ctx.lineTo(x + width, y + height - nextRadius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - nextRadius, y + height);
+  ctx.lineTo(x + nextRadius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - nextRadius);
+  ctx.lineTo(x, y + nextRadius);
+  ctx.quadraticCurveTo(x, y, x + nextRadius, y);
+  ctx.closePath();
 };
 
 const gradientDisc = (
@@ -543,6 +567,321 @@ const drawOrbitOverlays = (ctx: CanvasRenderingContext2D, motion: MotionFrame, w
   ctx.restore();
 };
 
+type CharacterFrame = {
+  center: Vec2;
+  width: number;
+  height: number;
+  angle: number;
+  face?: TrackedFace;
+};
+
+const getCharacterFrame = (motion: MotionFrame, width: number, height: number): CharacterFrame | undefined => {
+  if (motion.face) {
+    const face = motion.face;
+    const center = pointToCanvas(face.center, width, height);
+    const leftEye = face.leftEye ? pointToCanvas(face.leftEye, width, height) : undefined;
+    const rightEye = face.rightEye ? pointToCanvas(face.rightEye, width, height) : undefined;
+    const angle = leftEye && rightEye ? Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) : 0;
+    const faceWidth = Math.max(72, Math.abs(face.bounds.maxX - face.bounds.minX) * width);
+    const faceHeight = Math.max(92, Math.abs(face.bounds.maxY - face.bounds.minY) * height);
+    return {
+      center: {
+        x: center.x,
+        y: center.y + faceHeight * 0.03
+      },
+      width: faceWidth,
+      height: faceHeight,
+      angle,
+      face
+    };
+  }
+
+  if (motion.pose?.nose) {
+    const nose = pointToCanvas(motion.pose.nose, width, height);
+    const shoulderSpan =
+      motion.pose.leftShoulder && motion.pose.rightShoulder
+        ? Math.abs(motion.pose.leftShoulder.x - motion.pose.rightShoulder.x) * width
+        : width * 0.22;
+    const faceWidth = Math.max(76, shoulderSpan * 0.44);
+    return {
+      center: {
+        x: nose.x,
+        y: nose.y + faceWidth * 0.22
+      },
+      width: faceWidth,
+      height: faceWidth * 1.2,
+      angle: 0
+    };
+  }
+
+  return undefined;
+};
+
+const withCharacterFrame = (
+  ctx: CanvasRenderingContext2D,
+  frame: CharacterFrame,
+  draw: (frameWidth: number, frameHeight: number) => void
+) => {
+  ctx.save();
+  ctx.translate(frame.center.x, frame.center.y);
+  ctx.rotate(frame.angle);
+  draw(frame.width, frame.height);
+  ctx.restore();
+};
+
+const drawCharacterHalo = (
+  ctx: CanvasRenderingContext2D,
+  frame: CharacterFrame,
+  amount: number,
+  colors: Array<[number, string]>
+) => {
+  gradientDisc(ctx, frame.center, frame.width * (0.88 + amount * 0.2), colors, "screen");
+};
+
+const drawCyberBotFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+  const mouthOpen = frame.face?.mouthOpenness ?? 0;
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(103, 255, 229, ${0.18 * amount})`],
+    [0.62, `rgba(86, 149, 255, ${0.12 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    const plateWidth = faceWidth * (1.14 + amount * 0.08);
+    const plateHeight = faceHeight * (1.02 + amount * 0.05);
+    const corner = plateWidth * 0.11;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(86, 255, 228, 0.52)";
+    ctx.shadowBlur = 18 * amount;
+    drawRoundedRect(ctx, -plateWidth / 2, -plateHeight / 2, plateWidth, plateHeight, corner);
+    const plate = ctx.createLinearGradient(-plateWidth / 2, -plateHeight / 2, plateWidth / 2, plateHeight / 2);
+    plate.addColorStop(0, `rgba(28, 57, 62, ${0.72 + amount * 0.12})`);
+    plate.addColorStop(0.48, `rgba(12, 20, 24, ${0.74 + amount * 0.1})`);
+    plate.addColorStop(1, `rgba(56, 76, 95, ${0.68 + amount * 0.12})`);
+    ctx.fillStyle = plate;
+    ctx.fill();
+    ctx.lineWidth = Math.max(2, faceWidth * 0.025);
+    ctx.strokeStyle = `rgba(156, 255, 233, ${0.72 * amount})`;
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "rgba(132, 255, 226, 0.9)";
+    [-0.24, 0.24].forEach((offset) => {
+      drawRoundedRect(ctx, offset * plateWidth - plateWidth * 0.14, -plateHeight * 0.12, plateWidth * 0.28, plateHeight * 0.13, 8);
+      ctx.fill();
+    });
+
+    const mouthY = plateHeight * 0.2;
+    const mouthHeight = plateHeight * (0.08 + mouthOpen * 0.08);
+    drawRoundedRect(ctx, -plateWidth * 0.22, mouthY, plateWidth * 0.44, mouthHeight, 6);
+    ctx.fillStyle = "rgba(3, 11, 14, 0.9)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(139, 255, 230, 0.7)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    for (let i = -2; i <= 2; i += 1) {
+      ctx.beginPath();
+      ctx.moveTo(i * plateWidth * 0.075, mouthY + 3);
+      ctx.lineTo(i * plateWidth * 0.075, mouthY + mouthHeight - 3);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = `rgba(255, 239, 132, ${0.62 * amount})`;
+    ctx.lineWidth = Math.max(2, faceWidth * 0.018);
+    ctx.beginPath();
+    ctx.moveTo(0, -plateHeight * 0.5);
+    ctx.lineTo(0, -plateHeight * 0.72);
+    ctx.stroke();
+    drawPoint(ctx, { x: 0, y: -plateHeight * 0.76 }, Math.max(4, faceWidth * 0.055), "rgba(255, 239, 132, 0.92)");
+    ctx.restore();
+  });
+};
+
+const drawPopIdolFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+  const smile = frame.face?.smile ?? 0.35;
+  const bob = Math.sin(motion.timestamp / 320) * frame.width * 0.015 * amount;
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(255, 126, 204, ${0.14 * amount})`],
+    [0.58, `rgba(255, 236, 126, ${0.1 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, { ...frame, center: { x: frame.center.x, y: frame.center.y + bob } }, (faceWidth, faceHeight) => {
+    const glassWidth = faceWidth * 0.33;
+    const glassHeight = faceHeight * 0.18;
+    const eyeY = -faceHeight * 0.11;
+    const eyeGap = faceWidth * 0.22;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 122, 203, 0.56)";
+    ctx.shadowBlur = 16 * amount;
+
+    [-1, 1].forEach((side) => {
+      drawStarShape(
+        ctx,
+        { x: side * eyeGap, y: eyeY },
+        glassWidth * 0.55,
+        side * 0.22,
+        side < 0 ? "#ff73c7" : "#fff174",
+        "rgba(255, 255, 245, 0.88)",
+        clamp(0.58 + amount * 0.18, 0, 0.92)
+      );
+      ctx.fillStyle = "rgba(5, 8, 15, 0.64)";
+      ctx.beginPath();
+      ctx.ellipse(side * eyeGap, eyeY, glassWidth * 0.36, glassHeight * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.strokeStyle = "rgba(255, 255, 245, 0.82)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.022);
+    ctx.beginPath();
+    ctx.moveTo(-eyeGap + glassWidth * 0.28, eyeY);
+    ctx.quadraticCurveTo(0, eyeY - faceHeight * 0.04, eyeGap - glassWidth * 0.28, eyeY);
+    ctx.stroke();
+
+    const crownY = -faceHeight * 0.56;
+    ctx.fillStyle = "rgba(255, 226, 91, 0.88)";
+    ctx.strokeStyle = "rgba(255, 255, 224, 0.8)";
+    ctx.lineWidth = Math.max(1.5, faceWidth * 0.015);
+    ctx.beginPath();
+    ctx.moveTo(-faceWidth * 0.22, crownY + faceHeight * 0.1);
+    ctx.lineTo(-faceWidth * 0.14, crownY - faceHeight * 0.06);
+    ctx.lineTo(0, crownY + faceHeight * 0.04);
+    ctx.lineTo(faceWidth * 0.14, crownY - faceHeight * 0.06);
+    ctx.lineTo(faceWidth * 0.22, crownY + faceHeight * 0.1);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    [-1, 1].forEach((side) => {
+      const cheekX = side * faceWidth * 0.31;
+      const cheekY = faceHeight * 0.11;
+      const blush = ctx.createRadialGradient(cheekX, cheekY, 0, cheekX, cheekY, faceWidth * 0.16);
+      blush.addColorStop(0, `rgba(255, 118, 180, ${0.32 + smile * 0.18})`);
+      blush.addColorStop(1, "rgba(255, 118, 180, 0)");
+      ctx.fillStyle = blush;
+      ctx.beginPath();
+      ctx.arc(cheekX, cheekY, faceWidth * 0.16, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  });
+};
+
+const drawComicHeroFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+
+  if (motion.pose?.leftShoulder && motion.pose.rightShoulder) {
+    const left = pointToCanvas(motion.pose.leftShoulder, width, height);
+    const right = pointToCanvas(motion.pose.rightShoulder, width, height);
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = `rgba(34, 64, 141, ${0.42 + amount * 0.14})`;
+    ctx.strokeStyle = `rgba(255, 235, 104, ${0.52 * amount})`;
+    ctx.lineWidth = Math.max(2, frame.width * 0.025);
+    ctx.beginPath();
+    ctx.moveTo(left.x - frame.width * 0.22, left.y + frame.height * 0.2);
+    ctx.quadraticCurveTo(frame.center.x, frame.center.y + frame.height * 0.62, right.x + frame.width * 0.22, right.y + frame.height * 0.2);
+    ctx.lineTo(right.x - frame.width * 0.06, right.y + frame.height * 0.02);
+    ctx.quadraticCurveTo(frame.center.x, frame.center.y + frame.height * 0.34, left.x + frame.width * 0.06, left.y + frame.height * 0.02);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(255, 236, 91, ${0.14 * amount})`],
+    [0.62, `rgba(75, 130, 255, ${0.1 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    const maskWidth = faceWidth * 1.02;
+    const maskHeight = faceHeight * 0.3;
+    const maskY = -faceHeight * 0.16;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 235, 104, 0.45)";
+    ctx.shadowBlur = 14 * amount;
+    ctx.fillStyle = "rgba(19, 29, 75, 0.86)";
+    ctx.strokeStyle = "rgba(255, 235, 104, 0.82)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.022);
+    ctx.beginPath();
+    ctx.moveTo(-maskWidth / 2, maskY);
+    ctx.quadraticCurveTo(-faceWidth * 0.18, maskY - maskHeight * 0.42, 0, maskY - maskHeight * 0.12);
+    ctx.quadraticCurveTo(faceWidth * 0.18, maskY - maskHeight * 0.42, maskWidth / 2, maskY);
+    ctx.lineTo(maskWidth * 0.42, maskY + maskHeight * 0.68);
+    ctx.quadraticCurveTo(0, maskY + maskHeight, -maskWidth * 0.42, maskY + maskHeight * 0.68);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    [-1, 1].forEach((side) => {
+      ctx.fillStyle = "rgba(232, 255, 250, 0.92)";
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.22, maskY + maskHeight * 0.32, faceWidth * 0.13, faceHeight * 0.045, side * -0.18, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = "rgba(255, 235, 104, 0.9)";
+    ctx.beginPath();
+    ctx.moveTo(0, -faceHeight * 0.53);
+    ctx.lineTo(-faceWidth * 0.08, -faceHeight * 0.3);
+    ctx.lineTo(faceWidth * 0.02, -faceHeight * 0.3);
+    ctx.lineTo(-faceWidth * 0.04, -faceHeight * 0.1);
+    ctx.lineTo(faceWidth * 0.12, -faceHeight * 0.36);
+    ctx.lineTo(faceWidth * 0.02, -faceHeight * 0.36);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  });
+};
+
+const drawCharacterFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number,
+  selectedEffect: string
+) => {
+  if (selectedEffect === "cyberbot") {
+    drawCyberBotFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "popidol") {
+    drawPopIdolFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "comic") {
+    drawComicHeroFilter(ctx, motion, width, height, amount);
+  }
+};
+
 const drawRig = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number) => {
   if (motion.pose?.landmarks) {
     POSE_CONNECTIONS.forEach(([start, end]) => {
@@ -679,28 +1018,34 @@ export const renderFrame = (
   }
 
   const gestureAmount = baseAmount;
-  if (motion.gestures.faceCover || options.selectedEffect === "leaves") {
+  const shouldRunGestureEffects = options.selectedEffect === "auto";
+  const isCharacterEffect = ["cyberbot", "popidol", "comic"].includes(options.selectedEffect);
+
+  if (isCharacterEffect) {
+    drawCharacterFilter(ctx, motion, width, height, gestureAmount, options.selectedEffect);
+  }
+  if ((shouldRunGestureEffects && motion.gestures.faceCover) || options.selectedEffect === "leaves") {
     drawLeafSprouts(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.faceCover || options.selectedEffect === "fire") {
+  if ((shouldRunGestureEffects && motion.gestures.faceCover) || options.selectedEffect === "fire") {
     drawFireFace(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.handsUp || motion.gestures.fastMotion || options.selectedEffect === "melt") {
+  if ((shouldRunGestureEffects && (motion.gestures.handsUp || motion.gestures.fastMotion)) || options.selectedEffect === "melt") {
     drawHandMelt(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.openPalm || motion.gestures.fastMotion || options.selectedEffect === "stickers") {
+  if ((shouldRunGestureEffects && (motion.gestures.openPalm || motion.gestures.fastMotion)) || options.selectedEffect === "stickers") {
     drawStickerBurst(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.pinch || options.selectedEffect === "warp") {
+  if ((shouldRunGestureEffects && motion.gestures.pinch) || options.selectedEffect === "warp") {
     drawPinchWarp(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.openPalm || options.selectedEffect === "bloom") {
+  if ((shouldRunGestureEffects && motion.gestures.openPalm) || options.selectedEffect === "bloom") {
     drawPalmBloom(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.handsUp || options.selectedEffect === "contour") {
+  if ((shouldRunGestureEffects && motion.gestures.handsUp) || options.selectedEffect === "contour") {
     drawContourBands(ctx, motion, width, height, gestureAmount);
   }
-  if (motion.gestures.pinch || options.selectedEffect === "orbit") {
+  if ((shouldRunGestureEffects && motion.gestures.pinch) || options.selectedEffect === "orbit") {
     drawOrbitOverlays(ctx, motion, width, height, gestureAmount);
   }
   if (options.showRig) {

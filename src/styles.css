@@ -24,7 +24,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -601,13 +602,16 @@ h1 {
 .output-switcher,
 .effect-list,
 .gesture-stack,
-.system-stack {
+.system-stack,
+.shader-scene-list,
+.shader-param-stack {
   display: grid;
   gap: 8px;
 }
 
 .output-card,
-.effect-button {
+.effect-button,
+.shader-scene-button {
   width: 100%;
   border: 1px solid rgba(143, 255, 210, 0.2);
   border-radius: 8px;
@@ -627,6 +631,30 @@ h1 {
   color: #9db4ad;
   font-size: 0.78rem;
   line-height: 1.35;
+}
+
+.shader-scene-button {
+  display: grid;
+  gap: 3px;
+  min-height: 58px;
+  padding: 10px 11px;
+}
+
+.shader-scene-button strong,
+.shader-scene-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shader-scene-button strong {
+  color: #effaf6;
+  font-size: 0.82rem;
+}
+
+.shader-scene-button span {
+  color: #9db4ad;
+  font-size: 0.72rem;
 }
 
 .system-row {
@@ -663,7 +691,8 @@ h1 {
 }
 
 .output-card.active,
-.effect-button.active {
+.effect-button.active,
+.shader-scene-button.active {
   border-color: rgba(138, 255, 207, 0.62);
   background: rgba(32, 80, 60, 0.72);
 }
@@ -749,6 +778,72 @@ h1 {
 
 .effect-list {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.shader-param {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(143, 255, 210, 0.2);
+  border-radius: 8px;
+  background: rgba(8, 18, 18, 0.72);
+}
+
+.shader-param-header,
+.shader-map-row,
+.shader-depth {
+  display: grid;
+  align-items: center;
+  gap: 8px;
+}
+
+.shader-param-header,
+.shader-depth {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.shader-param-header span,
+.shader-depth span,
+.shader-map-row span {
+  overflow: hidden;
+  color: #9db4ad;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.shader-param-header strong,
+.shader-map-row span {
+  color: #a8ffd2;
+  text-align: right;
+}
+
+.shader-param input[type="range"] {
+  width: 100%;
+  accent-color: #85ffc7;
+}
+
+.shader-map-row {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.shader-map-row select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(143, 255, 210, 0.22);
+  border-radius: 8px;
+  color: #effaf6;
+  background: #081211;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.shader-depth {
+  grid-template-columns: 54px minmax(0, 1fr);
 }
 
 .effect-button {
