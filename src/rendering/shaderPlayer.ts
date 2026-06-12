@@ -33,6 +33,10 @@ export type ShaderScene = {
   detail: string;
   fragment: string;
   parameters: ShaderParameterDefinition[];
+  author?: string;
+  imported?: boolean;
+  license?: string;
+  source?: "builtin" | "shadertoy";
 };
 
 type MotionUniforms = {
@@ -52,6 +56,8 @@ const shaderPrelude = `
 precision highp float;
 uniform vec3 iResolution;
 uniform float iTime;
+uniform int iFrame;
+uniform vec4 iMouse;
 uniform vec4 fvMotion;
 uniform vec4 fvPose;
 uniform vec4 fvGestures;
@@ -71,6 +77,20 @@ export const shaderMotionSources: Array<{ id: ShaderMotionSource; label: string 
   { id: "noseX", label: "Nose X" },
   { id: "noseY", label: "Nose Y" }
 ];
+
+export const SHADER_LIBRARY_STORAGE_KEY = "faceviz.shaderLibrary.v1";
+
+export type StoredShaderScene = Pick<
+  ShaderScene,
+  "author" | "detail" | "fragment" | "id" | "imported" | "label" | "license" | "parameters" | "source"
+>;
+
+export type ImportedShaderInput = {
+  author?: string;
+  fragment: string;
+  label: string;
+  license?: string;
+};
 
 export const shaderScenes: ShaderScene[] = [
   {
@@ -233,6 +253,62 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
 
 export const getShaderScene = (sceneId: string) => shaderScenes.find((scene) => scene.id === sceneId) ?? shaderScenes[0];
 
+export const getShaderSceneFromLibrary = (sceneId: string, library: ShaderScene[]) =>
+  library.find((scene) => scene.id === sceneId) ?? library[0] ?? shaderScenes[0];
+
+const slugify = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 36);
+
+export const normalizeShadertoyFragment = (source: string) =>
+  source
+    .replace(/^\s*#version\s+.+$/gm, "")
+    .replace(/^\s*precision\s+(?:lowp|mediump|highp)\s+(?:float|int)\s*;\s*$/gm, "")
+    .replace(
+      /^\s*uniform\s+(?:float|int|vec[234]|sampler2D|samplerCube)\s+i(?:Resolution|Time|Frame|Mouse|ChannelTime|ChannelResolution|Date|SampleRate|Channel[0-3])\s*(?:\[[^\]]+\])?\s*;\s*$/gm,
+      ""
+    )
+    .trim();
+
+export const createImportedShaderScene = ({ author, fragment, label, license }: ImportedShaderInput): ShaderScene => {
+  const normalized = normalizeShadertoyFragment(fragment);
+  const fallbackLabel = label.trim() || "Imported Shader";
+  const id = `imported-${slugify(fallbackLabel) || "shader"}-${Date.now().toString(36)}`;
+
+  return {
+    id,
+    label: fallbackLabel,
+    detail: author?.trim() ? `Imported from ${author.trim()}` : "Imported Shadertoy-style scene",
+    author: author?.trim() || undefined,
+    fragment: normalized,
+    imported: true,
+    license: license?.trim() || undefined,
+    source: "shadertoy",
+    parameters: [
+      { id: "mocapA", label: "Mocap A", min: 0, max: 1, defaultValue: 0.5, motionDefault: "handOpen" },
+      { id: "mocapB", label: "Mocap B", min: 0, max: 1, defaultValue: 0.5, motionDefault: "pinch" },
+      { id: "mocapC", label: "Mocap C", min: 0, max: 1, defaultValue: 0.5, motionDefault: "velocity" },
+      { id: "mocapD", label: "Mocap D", min: 0, max: 1, defaultValue: 0.5, motionDefault: "noseX" }
+    ]
+  };
+};
+
+export const isStoredShaderScene = (value: unknown): value is StoredShaderScene => {
+  if (!value || typeof value !== "object") return false;
+  const scene = value as Partial<StoredShaderScene>;
+  return (
+    typeof scene.id === "string" &&
+    typeof scene.label === "string" &&
+    typeof scene.detail === "string" &&
+    typeof scene.fragment === "string" &&
+    Array.isArray(scene.parameters)
+  );
+};
+
 export const createDefaultShaderSettings = (scene: ShaderScene): Record<string, ShaderParameterSettings> =>
   Object.fromEntries(
     scene.parameters.map((parameter) => [
@@ -332,6 +408,8 @@ export class MotionShaderPlayer {
   private readonly canvas: HTMLCanvasElement;
   private readonly gl: WebGLRenderingContext;
   private buffer: WebGLBuffer | null = null;
+  private frame = 0;
+  private lastError = "";
   private program: WebGLProgram | null = null;
   private sceneId = "";
   private startedAt = performance.now();
@@ -379,6 +457,14 @@ export class MotionShaderPlayer {
     gl.useProgram(this.program);
     gl.uniform3f(gl.getUniformLocation(this.program, "iResolution"), width, height, 1);
     gl.uniform1f(gl.getUniformLocation(this.program, "iTime"), (performance.now() - this.startedAt) / 1000);
+    gl.uniform1i(gl.getUniformLocation(this.program, "iFrame"), this.frame);
+    gl.uniform4f(
+      gl.getUniformLocation(this.program, "iMouse"),
+      uniforms.pose[0] * width,
+      (1 - uniforms.pose[1]) * height,
+      uniforms.motion[1] * width,
+      uniforms.gestures[0] * height
+    );
     gl.uniform4f(gl.getUniformLocation(this.program, "fvMotion"), uniforms.motion[0], uniforms.motion[1], uniforms.motion[2], uniforms.motion[3]);
     gl.uniform4f(gl.getUniformLocation(this.program, "fvPose"), uniforms.pose[0], uniforms.pose[1], uniforms.pose[2], uniforms.pose[3]);
     gl.uniform4f(
@@ -401,9 +487,14 @@ export class MotionShaderPlayer {
     gl.enableVertexAttribArray(position);
     gl.vertexAttribPointer(position, 2, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    this.frame += 1;
 
     target.drawImage(this.canvas, 0, 0, width, height);
     return true;
+  }
+
+  getError() {
+    return this.lastError;
   }
 
   private compileScene(scene: ShaderScene) {
@@ -427,13 +518,15 @@ export class MotionShaderPlayer {
     gl.attachShader(program, fragment);
     gl.linkProgram(program);
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-      console.warn(gl.getProgramInfoLog(program));
+      this.lastError = gl.getProgramInfoLog(program) ?? "Unable to link shader program.";
+      console.warn(this.lastError);
       gl.deleteProgram(program);
       this.program = null;
       return;
     }
 
     this.sceneId = scene.id;
+    this.lastError = "";
     this.program = program;
   }
 
@@ -444,7 +537,8 @@ export class MotionShaderPlayer {
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
     if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      console.warn(gl.getShaderInfoLog(shader));
+      this.lastError = gl.getShaderInfoLog(shader) ?? "Unable to compile shader.";
+      console.warn(this.lastError);
       gl.deleteShader(shader);
       return null;
     }

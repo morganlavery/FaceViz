@@ -5,6 +5,7 @@ import {
   BadgeCheck,
   Bot,
   Camera,
+  Code2,
   Cpu,
   Crown,
   Expand,
@@ -16,29 +17,40 @@ import {
   Loader2,
   Maximize2,
   MonitorCog,
+  MountainSnow,
   Orbit,
   Pause,
   Play,
+  Rabbit,
   RadioTower,
   ScanFace,
   ScanLine,
   Settings2,
   SlidersHorizontal,
+  Smile,
+  Sprout,
+  Trash2,
   ShieldAlert,
   Sparkles,
   Star,
+  Swords,
+  Trees,
   Waves
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
 import { renderFrame, type CompositorOptions } from "./rendering/compositor";
 import {
+  SHADER_LIBRARY_STORAGE_KEY,
+  createImportedShaderScene,
   createDefaultShaderSettings,
+  getShaderSceneFromLibrary,
   getMotionSignalValue,
-  getShaderScene,
+  isStoredShaderScene,
   resolveShaderParameterValues,
   shaderMotionSources,
   shaderScenes,
+  type ShaderScene,
   type ShaderParameterSettings
 } from "./rendering/shaderPlayer";
 import {
@@ -76,6 +88,12 @@ const effects = [
   { id: "cyberbot", label: "Cyber Bot", icon: Bot },
   { id: "popidol", label: "Pop Idol", icon: Crown },
   { id: "comic", label: "Comic Hero", icon: Star },
+  { id: "toonkit", label: "Toon Kit", icon: Smile },
+  { id: "bigbuck", label: "Big Buck", icon: Rabbit },
+  { id: "sintel", label: "Sintel", icon: Swords },
+  { id: "spring", label: "Spring", icon: Sprout },
+  { id: "spritefright", label: "Sprite Fright", icon: Trees },
+  { id: "caminandes", label: "Caminandes", icon: MountainSnow },
   { id: "mirror", label: "Mirror", icon: FlipHorizontal2 },
   { id: "edge", label: "Edges", icon: ScanLine },
   { id: "leaves", label: "Leaves", icon: Leaf },
@@ -93,6 +111,29 @@ const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "shader", label: "Shader" },
   { id: "signal", label: "Signal" }
 ];
+
+const defaultShaderImportSource = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+  vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
+  float t = iTime * (0.4 + fvParamA.z);
+  float hand = fvParamA.x;
+  float pinch = fvParamA.y;
+  vec2 mouse = (iMouse.xy / iResolution.xy) * 2.0 - 1.0;
+  mouse.x *= iResolution.x / iResolution.y;
+
+  float rings = 0.0;
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i);
+    vec2 p = uv - mouse * (0.2 + hand * 0.35);
+    p.x += sin(t + fi) * 0.18;
+    p.y += cos(t * 0.82 + fi * 1.7) * 0.12;
+    rings += 0.012 / abs(length(p) - (0.16 + fi * 0.08 + pinch * 0.14));
+  }
+
+  vec3 color = vec3(0.12, 0.95, 0.72) * rings;
+  color += vec3(1.0, 0.62, 0.22) * smoothstep(0.7, 2.4, rings) * fvParamA.w;
+  color *= smoothstep(1.55, 0.18, length(uv));
+  fragColor = vec4(color, 1.0);
+}`;
 
 const outputPerformanceModes: Array<{
   id: OutputPerformanceMode;
@@ -228,10 +269,25 @@ export function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceTab>("preview");
   const [visualMode, setVisualMode] = useState<VisualMode>("camera");
+  const [importedShaderScenes, setImportedShaderScenes] = useState<ShaderScene[]>(() => {
+    try {
+      const stored = window.localStorage.getItem(SHADER_LIBRARY_STORAGE_KEY);
+      if (!stored) return [];
+      const parsed = JSON.parse(stored);
+      return Array.isArray(parsed) ? parsed.filter(isStoredShaderScene) : [];
+    } catch {
+      return [];
+    }
+  });
   const [shaderSceneId, setShaderSceneId] = useState(shaderScenes[0].id);
   const [shaderSettings, setShaderSettings] = useState<Record<string, ShaderParameterSettings>>(() =>
     createDefaultShaderSettings(shaderScenes[0])
   );
+  const [shaderImportName, setShaderImportName] = useState("Imported Shader");
+  const [shaderImportAuthor, setShaderImportAuthor] = useState("");
+  const [shaderImportLicense, setShaderImportLicense] = useState("");
+  const [shaderImportSource, setShaderImportSource] = useState(defaultShaderImportSource);
+  const [shaderImportError, setShaderImportError] = useState("");
   const outputStatuses = useMemo(() => getOutputStatuses(), []);
   const displayOutputStatuses = outputStatuses.map((status) => {
     const systemOutput = systemStatus?.outputs.find((output) => output.target === status.target);
@@ -246,7 +302,8 @@ export function App() {
   const selectedPerformanceMode =
     outputPerformanceModes.find((performanceMode) => performanceMode.id === outputPerformanceMode) ??
     outputPerformanceModes[0];
-  const activeShaderScene = useMemo(() => getShaderScene(shaderSceneId), [shaderSceneId]);
+  const shaderLibrary = useMemo(() => [...shaderScenes, ...importedShaderScenes], [importedShaderScenes]);
+  const activeShaderScene = useMemo(() => getShaderSceneFromLibrary(shaderSceneId, shaderLibrary), [shaderLibrary, shaderSceneId]);
   const shaderValues = useMemo(
     () => resolveShaderParameterValues(activeShaderScene, shaderSettings, motion),
     [activeShaderScene, motion, shaderSettings]
@@ -509,6 +566,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    window.localStorage.setItem(SHADER_LIBRARY_STORAGE_KEY, JSON.stringify(importedShaderScenes));
+  }, [importedShaderScenes]);
+
+  useEffect(() => {
     outputTargetRef.current = outputTarget;
   }, [outputTarget]);
 
@@ -556,6 +617,40 @@ export function App() {
       }
     }));
   }, []);
+
+  const importShaderScene = useCallback(() => {
+    setShaderImportError("");
+    if (!shaderImportName.trim()) {
+      setShaderImportError("Name required.");
+      return;
+    }
+    if (!shaderImportSource.includes("mainImage")) {
+      setShaderImportError("mainImage required.");
+      return;
+    }
+
+    const nextScene = createImportedShaderScene({
+      author: shaderImportAuthor,
+      fragment: shaderImportSource,
+      label: shaderImportName,
+      license: shaderImportLicense
+    });
+
+    setImportedShaderScenes((current) => [...current, nextScene]);
+    setShaderSceneId(nextScene.id);
+    setShaderSettings(createDefaultShaderSettings(nextScene));
+    setVisualMode("shader");
+    setActiveWorkspace("shader");
+  }, [shaderImportAuthor, shaderImportLicense, shaderImportName, shaderImportSource]);
+
+  const deleteShaderScene = useCallback((sceneId: string) => {
+    setImportedShaderScenes((current) => current.filter((scene) => scene.id !== sceneId));
+    if (shaderSceneId === sceneId) {
+      const fallback = shaderScenes[0];
+      setShaderSceneId(fallback.id);
+      setShaderSettings(createDefaultShaderSettings(fallback));
+    }
+  }, [shaderSceneId]);
 
   const selectWorkspace = useCallback((tab: WorkspaceTab) => {
     setActiveWorkspace(tab);
@@ -800,21 +895,62 @@ export function App() {
             <SlidersHorizontal size={16} />
           </div>
           <div className="shader-scene-list">
-            {shaderScenes.map((scene) => (
-              <button
-                key={scene.id}
-                className={activeShaderScene.id === scene.id ? "shader-scene-button active" : "shader-scene-button"}
-                onClick={() => {
-                  setShaderSceneId(scene.id);
-                  setVisualMode("shader");
-                  setActiveWorkspace("shader");
-                }}
-                type="button"
-              >
-                <strong>{scene.label}</strong>
-                <span>{scene.detail}</span>
-              </button>
+            {shaderLibrary.map((scene) => (
+              <div className="shader-scene-row" key={scene.id}>
+                <button
+                  className={activeShaderScene.id === scene.id ? "shader-scene-button active" : "shader-scene-button"}
+                  onClick={() => {
+                    setShaderSceneId(scene.id);
+                    setVisualMode("shader");
+                    setActiveWorkspace("shader");
+                  }}
+                  type="button"
+                >
+                  <strong>{scene.label}</strong>
+                  <span>{scene.imported ? scene.license || scene.author || scene.detail : scene.detail}</span>
+                </button>
+                {scene.imported && (
+                  <button
+                    className="shader-delete-button"
+                    onClick={() => deleteShaderScene(scene.id)}
+                    type="button"
+                    aria-label={`Delete ${scene.label}`}
+                    title="Delete shader"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                )}
+              </div>
             ))}
+          </div>
+          <div className="shader-importer">
+            <div className="shader-import-grid">
+              <label>
+                <span>Name</span>
+                <input value={shaderImportName} onChange={(event) => setShaderImportName(event.target.value)} />
+              </label>
+              <label>
+                <span>Author</span>
+                <input value={shaderImportAuthor} onChange={(event) => setShaderImportAuthor(event.target.value)} />
+              </label>
+            </div>
+            <label className="shader-import-license">
+              <span>License</span>
+              <input value={shaderImportLicense} onChange={(event) => setShaderImportLicense(event.target.value)} />
+            </label>
+            <label className="shader-source-control">
+              <span>mainImage</span>
+              <textarea
+                spellCheck={false}
+                value={shaderImportSource}
+                onChange={(event) => setShaderImportSource(event.target.value)}
+              />
+            </label>
+            <button className="shader-import-button" onClick={importShaderScene} type="button">
+              <Code2 size={16} />
+              Load Shader
+            </button>
+            {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
           </div>
           <div className="shader-param-stack">
             {activeShaderScene.parameters.map((parameter, index) => {

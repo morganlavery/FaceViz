@@ -865,6 +865,367 @@ const drawComicHeroFilter = (
   });
 };
 
+const drawToonKitFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+  const smile = frame.face?.smile ?? 0.4;
+
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(255, 214, 96, ${0.14 * amount})`],
+    [0.64, `rgba(89, 220, 255, ${0.1 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 236, 138, 0.42)";
+    ctx.shadowBlur = 10 * amount;
+    ctx.fillStyle = `rgba(255, 229, 128, ${0.36 + amount * 0.22})`;
+    ctx.strokeStyle = "rgba(35, 28, 20, 0.92)";
+    ctx.lineWidth = Math.max(2.2, faceWidth * 0.025);
+
+    ctx.beginPath();
+    ctx.ellipse(0, 0, faceWidth * 0.52, faceHeight * 0.54, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    [-1, 1].forEach((side) => {
+      ctx.fillStyle = "rgba(255, 245, 232, 0.96)";
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.22, -faceHeight * 0.08, faceWidth * 0.14, faceHeight * 0.16, side * -0.08, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "rgba(14, 20, 24, 0.9)";
+      ctx.beginPath();
+      ctx.arc(side * faceWidth * (0.22 + smile * 0.018), -faceHeight * 0.06, faceWidth * 0.045, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = "rgba(255, 108, 126, 0.72)";
+    ctx.beginPath();
+    ctx.arc(-faceWidth * 0.32, faceHeight * 0.12, faceWidth * 0.09, 0, Math.PI * 2);
+    ctx.arc(faceWidth * 0.32, faceHeight * 0.12, faceWidth * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(35, 28, 20, 0.92)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.02);
+    ctx.beginPath();
+    ctx.arc(0, faceHeight * 0.13, faceWidth * (0.16 + smile * 0.08), 0.12 * Math.PI, 0.88 * Math.PI);
+    ctx.stroke();
+    ctx.restore();
+  });
+};
+
+const drawBigBuckFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+  const mouthOpen = frame.face?.mouthOpenness ?? 0;
+
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(255, 236, 190, ${0.16 * amount})`],
+    [0.58, `rgba(151, 255, 159, ${0.08 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 246, 213, 0.38)";
+    ctx.shadowBlur = 12 * amount;
+
+    [-1, 1].forEach((side) => {
+      ctx.fillStyle = "rgba(231, 176, 105, 0.88)";
+      ctx.strokeStyle = "rgba(65, 40, 24, 0.9)";
+      ctx.lineWidth = Math.max(2, faceWidth * 0.025);
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.25, -faceHeight * 0.58, faceWidth * 0.15, faceHeight * 0.46, side * -0.18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "rgba(255, 224, 186, 0.86)";
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.25, -faceHeight * 0.58, faceWidth * 0.075, faceHeight * 0.33, side * -0.18, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    ctx.fillStyle = "rgba(207, 137, 67, 0.58)";
+    ctx.beginPath();
+    ctx.ellipse(0, -faceHeight * 0.02, faceWidth * 0.54, faceHeight * 0.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255, 237, 205, 0.9)";
+    ctx.strokeStyle = "rgba(74, 43, 24, 0.85)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.018);
+    ctx.beginPath();
+    ctx.ellipse(0, faceHeight * 0.18, faceWidth * 0.3, faceHeight * 0.18, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(62, 34, 20, 0.96)";
+    ctx.beginPath();
+    ctx.ellipse(0, faceHeight * 0.07, faceWidth * 0.09, faceHeight * 0.055, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255, 255, 245, 0.96)";
+    const toothHeight = faceHeight * (0.09 + mouthOpen * 0.08);
+    [-0.045, 0.045].forEach((offset) => {
+      drawRoundedRect(ctx, faceWidth * offset - faceWidth * 0.04, faceHeight * 0.2, faceWidth * 0.075, toothHeight, faceWidth * 0.015);
+      ctx.fill();
+      ctx.stroke();
+    });
+    ctx.restore();
+  });
+};
+
+const drawSintelFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+
+  if (motion.pose?.leftShoulder && motion.pose.rightShoulder) {
+    const left = pointToCanvas(motion.pose.leftShoulder, width, height);
+    const right = pointToCanvas(motion.pose.rightShoulder, width, height);
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = `rgba(71, 31, 28, ${0.36 + amount * 0.14})`;
+    ctx.strokeStyle = `rgba(226, 165, 96, ${0.55 * amount})`;
+    ctx.lineWidth = Math.max(2, frame.width * 0.018);
+    ctx.beginPath();
+    ctx.moveTo(left.x - frame.width * 0.08, left.y - frame.height * 0.02);
+    ctx.quadraticCurveTo(frame.center.x, frame.center.y + frame.height * 0.7, right.x + frame.width * 0.08, right.y - frame.height * 0.02);
+    ctx.lineTo(right.x - frame.width * 0.12, right.y + frame.height * 0.22);
+    ctx.quadraticCurveTo(frame.center.x, frame.center.y + frame.height * 0.48, left.x + frame.width * 0.12, left.y + frame.height * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 190, 112, 0.32)";
+    ctx.shadowBlur = 10 * amount;
+
+    ctx.fillStyle = "rgba(75, 37, 28, 0.88)";
+    ctx.strokeStyle = "rgba(238, 172, 91, 0.86)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.022);
+    drawRoundedRect(ctx, -faceWidth * 0.54, -faceHeight * 0.32, faceWidth * 1.08, faceHeight * 0.16, faceWidth * 0.035);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = "rgba(236, 162, 85, 0.72)";
+    ctx.lineWidth = Math.max(2.2, faceWidth * 0.026);
+    [-1, 1].forEach((side) => {
+      ctx.beginPath();
+      ctx.moveTo(side * faceWidth * 0.12, -faceHeight * 0.35);
+      ctx.quadraticCurveTo(side * faceWidth * 0.34, -faceHeight * 0.52, side * faceWidth * 0.52, -faceHeight * 0.44);
+      ctx.stroke();
+    });
+
+    ctx.strokeStyle = "rgba(255, 223, 155, 0.78)";
+    ctx.lineWidth = Math.max(1.5, faceWidth * 0.012);
+    ctx.beginPath();
+    ctx.moveTo(-faceWidth * 0.22, faceHeight * 0.22);
+    ctx.quadraticCurveTo(0, faceHeight * 0.34, faceWidth * 0.22, faceHeight * 0.22);
+    ctx.stroke();
+    ctx.restore();
+  });
+};
+
+const drawSpringFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+  const t = motion.timestamp / 1000;
+
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(140, 255, 164, ${0.14 * amount})`],
+    [0.6, `rgba(255, 210, 111, ${0.08 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.strokeStyle = "rgba(96, 74, 39, 0.86)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.018);
+
+    for (let i = 0; i < 12; i += 1) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const x = side * (faceWidth * (0.18 + randomUnit(i) * 0.38));
+      const y = -faceHeight * (0.34 + randomUnit(i + 4) * 0.18);
+      const stem = faceHeight * (0.1 + randomUnit(i + 2) * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(x * 0.55, -faceHeight * 0.2);
+      ctx.quadraticCurveTo(x * 0.8, y + stem * 0.4, x, y);
+      ctx.stroke();
+      drawLeafShape(
+        ctx,
+        { x, y: y + Math.sin(t + i) * faceHeight * 0.012 },
+        faceWidth * (0.11 + randomUnit(i + 5) * 0.05),
+        -Math.PI / 2 + side * (0.4 + randomUnit(i + 8) * 0.4),
+        i % 3 === 0 ? "#d5ff80" : "#72e890",
+        "rgba(238, 255, 211, 0.82)",
+        0.75 * amount
+      );
+    }
+
+    ctx.fillStyle = "rgba(92, 58, 34, 0.72)";
+    ctx.strokeStyle = "rgba(236, 206, 139, 0.7)";
+    drawRoundedRect(ctx, -faceWidth * 0.5, -faceHeight * 0.22, faceWidth, faceHeight * 0.18, faceWidth * 0.08);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  });
+};
+
+const drawSpriteFrightFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+  const mouthOpen = frame.face?.mouthOpenness ?? 0;
+
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(255, 122, 116, ${0.13 * amount})`],
+    [0.55, `rgba(154, 99, 255, ${0.12 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 110, 96, 0.42)";
+    ctx.shadowBlur = 14 * amount;
+    ctx.fillStyle = "rgba(176, 48, 49, 0.88)";
+    ctx.strokeStyle = "rgba(255, 226, 202, 0.9)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.02);
+
+    ctx.beginPath();
+    ctx.ellipse(0, -faceHeight * 0.38, faceWidth * 0.58, faceHeight * 0.25, 0, Math.PI, 0);
+    ctx.quadraticCurveTo(faceWidth * 0.42, -faceHeight * 0.18, 0, -faceHeight * 0.12);
+    ctx.quadraticCurveTo(-faceWidth * 0.42, -faceHeight * 0.18, -faceWidth * 0.58, -faceHeight * 0.38);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    for (let i = 0; i < 9; i += 1) {
+      const x = (-0.38 + i * 0.095) * faceWidth;
+      const y = -faceHeight * (0.34 + randomUnit(i) * 0.13);
+      ctx.fillStyle = "rgba(255, 238, 224, 0.94)";
+      ctx.beginPath();
+      ctx.arc(x, y, faceWidth * (0.035 + randomUnit(i + 2) * 0.035), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = "rgba(255, 231, 202, 0.72)";
+    ctx.beginPath();
+    ctx.ellipse(0, faceHeight * 0.03, faceWidth * 0.34, faceHeight * 0.36, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    [-1, 1].forEach((side) => {
+      ctx.fillStyle = "rgba(33, 18, 24, 0.9)";
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.14, -faceHeight * 0.05, faceWidth * 0.055, faceHeight * (0.07 + mouthOpen * 0.03), 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.restore();
+  });
+};
+
+const drawCaminandesFilter = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+
+  drawCharacterHalo(ctx, frame, amount, [
+    [0, `rgba(255, 231, 172, ${0.12 * amount})`],
+    [0.62, `rgba(126, 195, 255, ${0.08 * amount})`],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  withCharacterFrame(ctx, frame, (faceWidth, faceHeight) => {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.shadowColor = "rgba(255, 240, 200, 0.34)";
+    ctx.shadowBlur = 10 * amount;
+
+    [-1, 1].forEach((side) => {
+      ctx.fillStyle = "rgba(232, 204, 157, 0.84)";
+      ctx.strokeStyle = "rgba(82, 58, 38, 0.86)";
+      ctx.lineWidth = Math.max(2, faceWidth * 0.02);
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.28, -faceHeight * 0.45, faceWidth * 0.085, faceHeight * 0.28, side * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
+
+    ctx.fillStyle = "rgba(231, 211, 174, 0.6)";
+    ctx.strokeStyle = "rgba(91, 66, 44, 0.82)";
+    ctx.lineWidth = Math.max(2, faceWidth * 0.018);
+    ctx.beginPath();
+    ctx.ellipse(0, -faceHeight * 0.05, faceWidth * 0.38, faceHeight * 0.46, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(245, 226, 195, 0.92)";
+    drawRoundedRect(ctx, -faceWidth * 0.2, faceHeight * 0.02, faceWidth * 0.4, faceHeight * 0.28, faceWidth * 0.12);
+    ctx.fill();
+    ctx.stroke();
+
+    [-1, 1].forEach((side) => {
+      ctx.fillStyle = "rgba(31, 25, 20, 0.94)";
+      ctx.beginPath();
+      ctx.ellipse(side * faceWidth * 0.08, faceHeight * 0.13, faceWidth * 0.028, faceHeight * 0.045, 0, 0, Math.PI * 2);
+      ctx.fill();
+      drawPoint(ctx, { x: side * faceWidth * 0.18, y: -faceHeight * 0.09 }, faceWidth * 0.035, "rgba(31, 25, 20, 0.9)");
+    });
+
+    ctx.strokeStyle = "rgba(255, 242, 210, 0.72)";
+    ctx.lineWidth = Math.max(1.5, faceWidth * 0.012);
+    for (let i = 0; i < 8; i += 1) {
+      const x = (-0.31 + i * 0.09) * faceWidth;
+      ctx.beginPath();
+      ctx.moveTo(x, -faceHeight * 0.42);
+      ctx.quadraticCurveTo(x + Math.sin(i) * faceWidth * 0.04, -faceHeight * 0.5, x + faceWidth * 0.02, -faceHeight * 0.58);
+      ctx.stroke();
+    }
+    ctx.restore();
+  });
+};
+
 const drawCharacterFilter = (
   ctx: CanvasRenderingContext2D,
   motion: MotionFrame,
@@ -879,6 +1240,18 @@ const drawCharacterFilter = (
     drawPopIdolFilter(ctx, motion, width, height, amount);
   } else if (selectedEffect === "comic") {
     drawComicHeroFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "toonkit") {
+    drawToonKitFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "bigbuck") {
+    drawBigBuckFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "sintel") {
+    drawSintelFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "spring") {
+    drawSpringFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "spritefright") {
+    drawSpriteFrightFilter(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "caminandes") {
+    drawCaminandesFilter(ctx, motion, width, height, amount);
   }
 };
 
@@ -1019,7 +1392,17 @@ export const renderFrame = (
 
   const gestureAmount = baseAmount;
   const shouldRunGestureEffects = options.selectedEffect === "auto";
-  const isCharacterEffect = ["cyberbot", "popidol", "comic"].includes(options.selectedEffect);
+  const isCharacterEffect = [
+    "cyberbot",
+    "popidol",
+    "comic",
+    "toonkit",
+    "bigbuck",
+    "sintel",
+    "spring",
+    "spritefright",
+    "caminandes"
+  ].includes(options.selectedEffect);
 
   if (isCharacterEffect) {
     drawCharacterFilter(ctx, motion, width, height, gestureAmount, options.selectedEffect);

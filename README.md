@@ -39,6 +39,22 @@ npm run electron:dev
 npm run build
 ```
 
+## Character Filters And Licensing
+
+FaceViz character filters are drawn procedurally in `src/rendering/compositor.ts`; the app does not bundle third-party character images or production assets.
+
+- Toon Kit is a CC0-style original filter inspired by public-domain/CC0 game-asset conventions such as Kenney's CC0 character packs. No third-party artwork is embedded.
+- Big Buck, Sintel, Spring, Sprite Fright, and Caminandes are procedural tribute filters inspired by Blender open movie characters and motifs. They do not copy source production files, but they should be credited as inspired by Blender open movie projects when distributed.
+
+Attribution references:
+
+- Big Buck Bunny, Blender Foundation, CC BY 3.0: https://peach.blender.org/about/
+- Sintel / Durian Open Movie Project, Blender Foundation, CC BY 3.0: https://durian.blender.org/sharing/
+- Spring Open Movie, Blender Studio, CC BY 4.0: https://studio.blender.org/projects/spring/pages/about/
+- Sprite Fright, Blender Studio, Creative Commons Attribution: https://studio.blender.org/projects/sprite-fright/pages/about/
+- Caminandes, Blender Foundation, CC BY 3.0: https://commons.wikimedia.org/wiki/File:Caminandes_3_-_Llamigos_-_Blender_Animated_Short.webm
+- Kenney assets, CC0/public domain asset policy: https://kenney.nl/support
+
 ## Architecture
 
 ```text

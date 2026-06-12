@@ -25,7 +25,8 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -604,7 +605,8 @@ h1 {
 .gesture-stack,
 .system-stack,
 .shader-scene-list,
-.shader-param-stack {
+.shader-param-stack,
+.shader-importer {
   display: grid;
   gap: 8px;
 }
@@ -633,6 +635,12 @@ h1 {
   line-height: 1.35;
 }
 
+.shader-scene-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
 .shader-scene-button {
   display: grid;
   gap: 3px;
@@ -655,6 +663,17 @@ h1 {
 .shader-scene-button span {
   color: #9db4ad;
   font-size: 0.72rem;
+}
+
+.shader-delete-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  min-height: 58px;
+  border: 1px solid rgba(255, 106, 128, 0.28);
+  border-radius: 8px;
+  color: #ffdce1;
+  background: rgba(72, 18, 26, 0.58);
 }
 
 .system-row {
@@ -787,6 +806,85 @@ h1 {
   border: 1px solid rgba(143, 255, 210, 0.2);
   border-radius: 8px;
   background: rgba(8, 18, 18, 0.72);
+}
+
+.shader-importer {
+  padding: 10px;
+  border: 1px solid rgba(107, 171, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 15, 22, 0.72);
+}
+
+.shader-import-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.shader-importer label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.shader-importer label span {
+  overflow: hidden;
+  color: #9db4ad;
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.shader-importer input,
+.shader-importer textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(143, 255, 210, 0.2);
+  border-radius: 8px;
+  color: #effaf6;
+  background: #07100f;
+}
+
+.shader-importer input {
+  height: 34px;
+  padding: 0 9px;
+  font-size: 0.72rem;
+}
+
+.shader-importer textarea {
+  min-height: 142px;
+  max-height: 260px;
+  padding: 9px;
+  resize: vertical;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.shader-import-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  border: 1px solid rgba(107, 171, 255, 0.48);
+  border-radius: 8px;
+  color: #effaf6;
+  background: rgba(24, 55, 88, 0.78);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.shader-import-error {
+  padding: 8px 9px;
+  border: 1px solid rgba(255, 106, 128, 0.5);
+  border-radius: 8px;
+  color: #ffdce1;
+  background: rgba(92, 20, 30, 0.58);
+  font-size: 0.74rem;
 }
 
 .shader-param-header,
