@@ -322,16 +322,15 @@ const publishSyphonFrame = (frame) => {
     };
   }
 
-  const header = Buffer.allocUnsafe(16);
-  header.writeUInt32BE(0x46565a31, 0);
-  header.writeUInt32BE(width, 4);
-  header.writeUInt32BE(height, 8);
-  header.writeUInt32BE(pixelBuffer.length, 12);
-  const buffer = Buffer.concat([header, pixelBuffer], header.length + pixelBuffer.length);
-  const length = Buffer.allocUnsafe(4);
-  length.writeUInt32BE(buffer.length, 0);
+  const prefix = Buffer.allocUnsafe(20);
+  prefix.writeUInt32BE(16 + pixelBuffer.length, 0);
+  prefix.writeUInt32BE(0x46565a31, 4);
+  prefix.writeUInt32BE(width, 8);
+  prefix.writeUInt32BE(height, 12);
+  prefix.writeUInt32BE(pixelBuffer.length, 16);
   syphonWriteBusy = true;
-  const flushed = syphonProcess.stdin.write(Buffer.concat([length, buffer], length.length + buffer.length));
+  syphonProcess.stdin.write(prefix);
+  const flushed = syphonProcess.stdin.write(pixelBuffer);
   if (flushed) {
     setImmediate(() => {
       syphonWriteBusy = false;

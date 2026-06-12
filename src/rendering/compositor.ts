@@ -34,6 +34,9 @@ const POSE_CONNECTIONS = [
   [0, 12]
 ];
 
+const HAND_TIP_INDICES = [4, 8, 12, 16, 20];
+const HAND_GRAPHIC_ANCHORS = [0, 4, 8, 12, 16, 20];
+
 type CompositorOptions = {
   showRig: boolean;
   effectAmount: number;
@@ -73,6 +76,11 @@ const drawPoint = (ctx: CanvasRenderingContext2D, point: Vec2, radius: number, f
   ctx.restore();
 };
 
+const randomUnit = (seed: number) => {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
+};
+
 const gradientDisc = (
   ctx: CanvasRenderingContext2D,
   center: Vec2,
@@ -88,6 +96,69 @@ const gradientDisc = (
   ctx.beginPath();
   ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
   ctx.fill();
+  ctx.restore();
+};
+
+const drawLeafShape = (
+  ctx: CanvasRenderingContext2D,
+  point: Vec2,
+  length: number,
+  angle: number,
+  fill: string,
+  stroke: string,
+  alpha: number
+) => {
+  ctx.save();
+  ctx.translate(point.x, point.y);
+  ctx.rotate(angle);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = Math.max(1, length * 0.045);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.bezierCurveTo(length * 0.48, -length * 0.16, length * 0.5, -length * 0.78, 0, -length);
+  ctx.bezierCurveTo(-length * 0.5, -length * 0.78, -length * 0.48, -length * 0.16, 0, 0);
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -length * 0.08);
+  ctx.lineTo(0, -length * 0.78);
+  ctx.stroke();
+  ctx.restore();
+};
+
+const drawStarShape = (
+  ctx: CanvasRenderingContext2D,
+  point: Vec2,
+  radius: number,
+  rotation: number,
+  fill: string,
+  stroke: string,
+  alpha: number
+) => {
+  ctx.save();
+  ctx.translate(point.x, point.y);
+  ctx.rotate(rotation);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = Math.max(1, radius * 0.12);
+  ctx.beginPath();
+  for (let i = 0; i < 10; i += 1) {
+    const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+    const nextRadius = i % 2 === 0 ? radius : radius * 0.42;
+    const x = Math.cos(angle) * nextRadius;
+    const y = Math.sin(angle) * nextRadius;
+    if (i === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
   ctx.restore();
 };
 
@@ -118,12 +189,88 @@ const drawFireFace = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width:
   ctx.restore();
 };
 
+const drawLeafSprouts = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const t = motion.timestamp / 1000;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  motion.hands.forEach((hand, handIndex) => {
+    const direction = hand.handedness === "Left" ? -1 : 1;
+    HAND_GRAPHIC_ANCHORS.forEach((anchorIndex) => {
+      const landmark = hand.landmarks[anchorIndex];
+      if (!landmark) return;
+      const anchor = pointToCanvas(landmark, width, height);
+      const seed = handIndex * 30 + anchorIndex * 7;
+      const stemLength = (34 + randomUnit(seed) * 46 + hand.velocity * 34) * amount;
+      const stemAngle = -Math.PI / 2 + direction * (0.18 + randomUnit(seed + 1) * 0.7) + Math.sin(t * 1.7 + seed) * 0.18;
+      const tip = {
+        x: anchor.x + Math.cos(stemAngle) * stemLength,
+        y: anchor.y + Math.sin(stemAngle) * stemLength
+      };
+      const alpha = Math.min(0.9, (0.36 + hand.openness * 0.3 + amount * 0.22) * amount);
+
+      ctx.strokeStyle = `rgba(122, 255, 159, ${alpha * 0.58})`;
+      ctx.lineWidth = Math.max(1.2, 2.8 * amount);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(anchor.x, anchor.y);
+      ctx.quadraticCurveTo(
+        anchor.x + Math.cos(stemAngle - 0.6) * stemLength * 0.35,
+        anchor.y + Math.sin(stemAngle - 0.6) * stemLength * 0.35,
+        tip.x,
+        tip.y
+      );
+      ctx.stroke();
+
+      for (let leaf = 0; leaf < 3; leaf += 1) {
+        const along = 0.42 + leaf * 0.2;
+        const side = leaf % 2 === 0 ? -1 : 1;
+        const point = {
+          x: anchor.x + (tip.x - anchor.x) * along,
+          y: anchor.y + (tip.y - anchor.y) * along
+        };
+        const leafLength = (12 + randomUnit(seed + leaf + 2) * 18) * amount;
+        drawLeafShape(
+          ctx,
+          point,
+          leafLength,
+          stemAngle + side * (0.82 + randomUnit(seed + leaf + 5) * 0.34),
+          leaf % 2 === 0 ? "#76ff9e" : "#d3ff78",
+          "rgba(230, 255, 196, 0.72)",
+          alpha
+        );
+      }
+    });
+  });
+
+  if (motion.pose?.nose) {
+    const nose = pointToCanvas(motion.pose.nose, width, height);
+    for (let i = 0; i < 10; i += 1) {
+      const angle = -Math.PI + (i / 9) * Math.PI * 2 + Math.sin(t * 0.9 + i) * 0.12;
+      const radius = (42 + randomUnit(i + 4) * 42) * amount;
+      const point = {
+        x: nose.x + Math.cos(angle) * radius,
+        y: nose.y + Math.sin(angle) * radius * 0.72
+      };
+      drawLeafShape(
+        ctx,
+        point,
+        (13 + randomUnit(i + 9) * 19) * amount,
+        angle + Math.PI / 2,
+        i % 2 === 0 ? "#6fffaa" : "#f0ff8f",
+        "rgba(235, 255, 203, 0.72)",
+        0.28 * amount
+      );
+    }
+  }
+  ctx.restore();
+};
+
 const drawHandMelt = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
   ctx.save();
   ctx.globalCompositeOperation = "screen";
   motion.hands.forEach((hand, handIndex) => {
     hand.landmarks.forEach((landmark, index) => {
-      if (![4, 8, 12, 16, 20].includes(index)) return;
+      if (!HAND_TIP_INDICES.includes(index)) return;
       const point = pointToCanvas(landmark, width, height);
       const length = (70 + hand.velocity * 160 + index * 4) * amount;
       const hue = handIndex === 0 ? 178 : 48;
@@ -144,6 +291,47 @@ const drawHandMelt = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width:
         point.y + length
       );
       ctx.stroke();
+    });
+  });
+  ctx.restore();
+};
+
+const drawStickerBurst = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const palette = [
+    ["#fff06f", "rgba(255, 255, 210, 0.92)"],
+    ["#ff7ac8", "rgba(255, 221, 247, 0.9)"],
+    ["#73f7ff", "rgba(216, 253, 255, 0.9)"],
+    ["#b3ff7a", "rgba(235, 255, 210, 0.9)"]
+  ] as const;
+  const t = motion.timestamp / 1000;
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  motion.hands.forEach((hand, handIndex) => {
+    const burst = Math.max(0.42, hand.openness + hand.velocity * 0.6) * amount;
+    HAND_TIP_INDICES.forEach((index, tipOrder) => {
+      const landmark = hand.landmarks[index];
+      if (!landmark) return;
+      const point = pointToCanvas(landmark, width, height);
+      for (let i = 0; i < 3; i += 1) {
+        const seed = handIndex * 80 + index * 11 + i;
+        const driftAngle = randomUnit(seed) * Math.PI * 2 + t * (0.2 + i * 0.07);
+        const drift = (12 + i * 17 + hand.velocity * 42) * amount;
+        const stickerPoint = {
+          x: point.x + Math.cos(driftAngle) * drift,
+          y: point.y + Math.sin(driftAngle) * drift
+        };
+        const [fill, stroke] = palette[(tipOrder + i + handIndex) % palette.length];
+        drawStarShape(
+          ctx,
+          stickerPoint,
+          (8 + randomUnit(seed + 3) * 13) * burst,
+          t * (0.8 + i * 0.18) + seed,
+          fill,
+          stroke,
+          Math.min(0.86, 0.26 + burst * 0.4)
+        );
+      }
     });
   });
   ctx.restore();
@@ -183,6 +371,60 @@ const drawPinchWarp = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width
   });
 };
 
+const drawContourBands = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const t = motion.timestamp / 1000;
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  if (motion.pose?.nose) {
+    const nose = pointToCanvas(motion.pose.nose, width, height);
+    const shoulderSpan =
+      motion.pose.leftShoulder && motion.pose.rightShoulder
+        ? Math.abs(motion.pose.leftShoulder.x - motion.pose.rightShoulder.x) * width
+        : width * 0.22;
+    for (let i = 0; i < 5; i += 1) {
+      const radiusX = (shoulderSpan * (0.22 + i * 0.06) + 20) * amount;
+      const radiusY = radiusX * (0.72 + i * 0.03);
+      ctx.strokeStyle = `hsla(${166 + i * 24}, 100%, ${66 + i * 2}%, ${0.16 + amount * 0.12})`;
+      ctx.lineWidth = Math.max(1, (2.2 - i * 0.12) * amount);
+      ctx.beginPath();
+      ctx.ellipse(
+        nose.x + Math.sin(t * 1.1 + i) * 3 * amount,
+        nose.y + 16 * amount,
+        radiusX,
+        radiusY,
+        Math.sin(t * 0.45) * 0.08,
+        Math.PI * (0.08 + i * 0.03),
+        Math.PI * (1.92 - i * 0.03)
+      );
+      ctx.stroke();
+    }
+  }
+
+  motion.hands.forEach((hand, handIndex) => {
+    const center = pointToCanvas(hand.centroid, width, height);
+    HAND_CONNECTIONS.forEach(([start, end], segmentIndex) => {
+      const a = hand.landmarks[start];
+      const b = hand.landmarks[end];
+      if (!a || !b || segmentIndex % 2 !== handIndex % 2) return;
+      const pointA = pointToCanvas(a, width, height);
+      const pointB = pointToCanvas(b, width, height);
+      const wobble = Math.sin(t * 2.2 + segmentIndex) * 8 * amount;
+      ctx.strokeStyle = hand.handedness === "Left" ? "rgba(255, 234, 111, 0.34)" : "rgba(109, 255, 213, 0.34)";
+      ctx.lineWidth = Math.max(1, 3 * amount);
+      ctx.beginPath();
+      ctx.moveTo(pointA.x, pointA.y);
+      ctx.quadraticCurveTo(center.x + wobble, center.y - wobble, pointB.x, pointB.y);
+      ctx.stroke();
+    });
+  });
+
+  ctx.restore();
+};
+
 const drawPalmBloom = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
   motion.hands.forEach((hand) => {
     if (hand.openness < 0.38) return;
@@ -193,6 +435,42 @@ const drawPalmBloom = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width
       [1, "rgba(0, 0, 0, 0)"]
     ]);
   });
+};
+
+const drawOrbitOverlays = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const t = motion.timestamp / 1000;
+  const centers = motion.hands.map((hand) => pointToCanvas(hand.centroid, width, height));
+  if (motion.pose?.nose) {
+    centers.push(pointToCanvas(motion.pose.nose, width, height));
+  }
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  centers.forEach((center, centerIndex) => {
+    const baseRadius = (38 + centerIndex * 13) * amount;
+    for (let ring = 0; ring < 3; ring += 1) {
+      const radiusX = baseRadius + ring * 22 * amount;
+      const radiusY = radiusX * (0.38 + ring * 0.1);
+      const rotation = t * (0.38 + ring * 0.12) + centerIndex;
+      ctx.strokeStyle = `hsla(${188 + ring * 34 + centerIndex * 24}, 100%, 70%, ${0.16 + amount * 0.16})`;
+      ctx.lineWidth = Math.max(1, (2.4 - ring * 0.2) * amount);
+      ctx.beginPath();
+      ctx.ellipse(center.x, center.y, radiusX, radiusY, rotation, 0, Math.PI * 2);
+      ctx.stroke();
+
+      const dotAngle = t * (1.3 + ring * 0.34) + centerIndex * 1.7 + ring;
+      drawPoint(
+        ctx,
+        {
+          x: center.x + Math.cos(dotAngle) * radiusX,
+          y: center.y + Math.sin(dotAngle) * radiusY
+        },
+        Math.max(2, 4.6 * amount),
+        ring % 2 === 0 ? "rgba(248, 255, 139, 0.82)" : "rgba(115, 247, 255, 0.82)"
+      );
+    }
+  });
+  ctx.restore();
 };
 
 const drawRig = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number) => {
@@ -216,7 +494,7 @@ const drawRig = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: numb
 
     hand.landmarks.forEach((landmark, index) => {
       const point = pointToCanvas(landmark, width, height);
-      drawPoint(ctx, point, [4, 8, 12, 16, 20].includes(index) ? 4.5 : 2.8, index === 0 ? "#ffffff" : "#f8f16a");
+      drawPoint(ctx, point, HAND_TIP_INDICES.includes(index) ? 4.5 : 2.8, index === 0 ? "#ffffff" : "#f8f16a");
     });
   });
 };
@@ -291,17 +569,29 @@ export const renderFrame = (
   }
 
   const gestureAmount = Math.max(0.22, options.effectAmount);
+  if (motion.gestures.faceCover || options.selectedEffect === "leaves") {
+    drawLeafSprouts(ctx, motion, width, height, gestureAmount);
+  }
   if (motion.gestures.faceCover || options.selectedEffect === "fire") {
     drawFireFace(ctx, motion, width, height, gestureAmount);
   }
   if (motion.gestures.handsUp || motion.gestures.fastMotion || options.selectedEffect === "melt") {
     drawHandMelt(ctx, motion, width, height, gestureAmount);
   }
+  if (motion.gestures.openPalm || motion.gestures.fastMotion || options.selectedEffect === "stickers") {
+    drawStickerBurst(ctx, motion, width, height, gestureAmount);
+  }
   if (motion.gestures.pinch || options.selectedEffect === "warp") {
     drawPinchWarp(ctx, motion, width, height, gestureAmount);
   }
   if (motion.gestures.openPalm || options.selectedEffect === "bloom") {
     drawPalmBloom(ctx, motion, width, height, gestureAmount);
+  }
+  if (motion.gestures.handsUp || options.selectedEffect === "contour") {
+    drawContourBands(ctx, motion, width, height, gestureAmount);
+  }
+  if (motion.gestures.pinch || options.selectedEffect === "orbit") {
+    drawOrbitOverlays(ctx, motion, width, height, gestureAmount);
   }
   if (options.showRig) {
     drawRig(ctx, motion, width, height);

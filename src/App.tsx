@@ -9,9 +9,11 @@ import {
   Fingerprint,
   Flame,
   Hand,
+  Leaf,
   Loader2,
   Maximize2,
   MonitorCog,
+  Orbit,
   Pause,
   Play,
   RadioTower,
@@ -19,9 +21,10 @@ import {
   Settings2,
   ShieldAlert,
   Sparkles,
+  Star,
   Waves
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
 import { renderFrame } from "./rendering/compositor";
 import {
@@ -38,6 +41,12 @@ import type { Handedness, Landmark, MotionFrame, PreviousHandSample } from "./tr
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
 type WorkspaceTab = "preview" | "signal";
+type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
+type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
+type SignalNodePosition = {
+  x: number;
+  y: number;
+};
 
 const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
 const HAND_MODEL =
@@ -47,9 +56,13 @@ const POSE_MODEL =
 
 const effects = [
   { id: "auto", label: "Auto", icon: Sparkles },
+  { id: "leaves", label: "Leaves", icon: Leaf },
   { id: "fire", label: "Fire", icon: Flame },
+  { id: "stickers", label: "Stickers", icon: Star },
   { id: "melt", label: "Melt", icon: Waves },
+  { id: "contour", label: "Contour", icon: ScanFace },
   { id: "warp", label: "Warp", icon: Aperture },
+  { id: "orbit", label: "Orbit", icon: Orbit },
   { id: "bloom", label: "Bloom", icon: Fingerprint }
 ];
 
@@ -57,6 +70,37 @@ const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Preview" },
   { id: "signal", label: "Signal" }
 ];
+
+const outputPerformanceModes: Array<{
+  id: OutputPerformanceMode;
+  label: string;
+  width: number;
+  height: number;
+  fps: number;
+}> = [
+  { id: "max", label: "Max", width: 480, height: 270, fps: 60 },
+  { id: "turbo", label: "Turbo", width: 640, height: 360, fps: 60 },
+  { id: "live", label: "Live", width: 960, height: 540, fps: 60 },
+  { id: "sharp", label: "Sharp", width: 1280, height: 720, fps: 30 }
+];
+
+const defaultSignalNodePositions: Record<SignalNodeId, SignalNodePosition> = {
+  camera: { x: 5, y: 12 },
+  tracker: { x: 27, y: 23 },
+  core: { x: 48, y: 38 },
+  output: { x: 75, y: 16 },
+  consumer: { x: 73, y: 64 },
+  input: { x: 10, y: 62 }
+};
+
+const signalNodeDimensions: Record<SignalNodeId, { width: number; height: number }> = {
+  camera: { width: 215, height: 128 },
+  tracker: { width: 215, height: 128 },
+  core: { width: 238, height: 128 },
+  output: { width: 215, height: 128 },
+  consumer: { width: 215, height: 128 },
+  input: { width: 215, height: 128 }
+};
 
 const getHandedness = (result: unknown, index: number): Handedness => {
   const handednesses = (result as { handednesses?: Array<Array<{ categoryName?: string }>> }).handednesses;
@@ -123,6 +167,8 @@ export function App() {
   const outputTargetRef = useRef<OutputTarget>(getPreferredOutput());
   const outputStreamingRef = useRef(false);
   const outputFrameInFlightRef = useRef(false);
+  const outputLastSendAtRef = useRef(0);
+  const outputFrameIntervalRef = useRef(1000 / 60);
   const outputTimerRef = useRef<number | null>(null);
   const compositorOptionsRef = useRef({
     showRig: true,
@@ -149,6 +195,7 @@ export function App() {
   const [mode, setMode] = useState<"upper" | "full">("upper");
   const [showRig, setShowRig] = useState(true);
   const [showRigInOutput, setShowRigInOutput] = useState(true);
+  const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
   const [selectedEffect, setSelectedEffect] = useState("auto");
   const [outputTarget, setOutputTarget] = useState<OutputTarget>(getPreferredOutput);
@@ -167,6 +214,9 @@ export function App() {
   });
   const selectedOutput = displayOutputStatuses.find((status) => status.target === outputTarget) ?? displayOutputStatuses[0];
   const selectedSystemOutput = systemStatus?.outputs.find((status) => status.target === outputTarget);
+  const selectedPerformanceMode =
+    outputPerformanceModes.find((performanceMode) => performanceMode.id === outputPerformanceMode) ??
+    outputPerformanceModes[0];
 
   const stopCapture = useCallback(() => {
     runningRef.current = false;
@@ -189,8 +239,16 @@ export function App() {
     }
 
     const canvas = outputCanvasRef.current ?? canvasRef.current;
-    if (canvas && canvas.width > 1 && canvas.height > 1 && !outputFrameInFlightRef.current) {
+    const now = performance.now();
+    if (
+      canvas &&
+      canvas.width > 1 &&
+      canvas.height > 1 &&
+      !outputFrameInFlightRef.current &&
+      now - outputLastSendAtRef.current >= outputFrameIntervalRef.current
+    ) {
       outputFrameInFlightRef.current = true;
+      outputLastSendAtRef.current = now;
       try {
         const context = canvas.getContext("2d", { willReadFrequently: true });
         const frame = context?.getImageData(0, 0, canvas.width, canvas.height);
@@ -210,7 +268,7 @@ export function App() {
       }
     }
 
-    outputTimerRef.current = window.setTimeout(pumpOutputFrame, 33);
+    outputTimerRef.current = window.setTimeout(pumpOutputFrame, 8);
   }, []);
 
   const startOutput = useCallback(async () => {
@@ -222,6 +280,7 @@ export function App() {
     }
 
     outputTargetRef.current = outputTarget;
+    outputLastSendAtRef.current = 0;
     outputStreamingRef.current = true;
     setIsOutputStreaming(true);
     pumpOutputFrame();
@@ -405,6 +464,10 @@ export function App() {
   }, [outputTarget]);
 
   useEffect(() => {
+    outputFrameIntervalRef.current = 1000 / selectedPerformanceMode.fps;
+  }, [selectedPerformanceMode.fps]);
+
+  useEffect(() => {
     compositorOptionsRef.current = {
       showRig,
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
@@ -443,7 +506,12 @@ export function App() {
   return (
     <main className="app-shell">
       <video ref={videoRef} className="source-video" playsInline muted />
-      <canvas ref={outputCanvasRef} className="output-canvas" aria-hidden="true" />
+      <canvas
+        ref={outputCanvasRef}
+        className="output-canvas"
+        style={{ width: selectedPerformanceMode.width, height: selectedPerformanceMode.height }}
+        aria-hidden="true"
+      />
 
       <section className="workspace">
         <header className="topbar">
@@ -599,6 +667,23 @@ export function App() {
               onChange={(event) => setShowRigInOutput(event.target.checked)}
             />
           </label>
+          <div className="performance-control">
+            <div className="performance-options" role="group" aria-label="Syphon speed">
+              {outputPerformanceModes.map((performanceMode) => (
+                <button
+                  key={performanceMode.id}
+                  className={performanceMode.id === outputPerformanceMode ? "performance-option active" : "performance-option"}
+                  onClick={() => setOutputPerformanceMode(performanceMode.id)}
+                  type="button"
+                >
+                  <strong>{performanceMode.label}</strong>
+                  <span>
+                    {performanceMode.width}x{performanceMode.height} / {performanceMode.fps}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
           {outputError && <div className="output-error">{outputError}</div>}
         </section>
 
@@ -698,6 +783,13 @@ function SignalGraph({
   selectedSystemOutput,
   systemStatus
 }: SignalGraphProps) {
+  const graphRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{
+    nodeId: SignalNodeId;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+  const [nodePositions, setNodePositions] = useState(defaultSignalNodePositions);
   const syphon = systemStatus?.syphon;
   const outputConsumers = syphon?.outputConsumers ?? [];
   const inputSources = syphon?.inputSources ?? [];
@@ -716,66 +808,158 @@ function SignalGraph({
     `${motion?.landmarkCount ?? 0} landmarks`,
     `${Math.round(latency)} ms`
   ];
+  const wires = [
+    { id: "camera-tracker", from: "camera" as const, to: "tracker" as const, className: "live" },
+    { id: "tracker-core", from: "tracker" as const, to: "core" as const, className: "live" },
+    { id: "core-output", from: "core" as const, to: "output" as const, className: "live" },
+    {
+      id: "output-consumer",
+      from: "output" as const,
+      to: "consumer" as const,
+      className: consumerStatus === "connected" ? "live" : "pending"
+    },
+    { id: "input-core", from: "input" as const, to: "core" as const, className: "input" }
+  ];
+
+  const moveNode = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    const graph = graphRef.current;
+    if (!drag || !graph) return;
+
+    const rect = graph.getBoundingClientRect();
+    const nextX = ((event.clientX - rect.left - drag.offsetX) / rect.width) * 100;
+    const nextY = ((event.clientY - rect.top - drag.offsetY) / rect.height) * 100;
+    const dimensions = signalNodeDimensions[drag.nodeId];
+    const maxX = Math.max(0, 100 - (dimensions.width / 1000) * 100);
+    const maxY = Math.max(0, 100 - (dimensions.height / 520) * 100);
+
+    setNodePositions((current) => ({
+      ...current,
+      [drag.nodeId]: {
+        x: clamp(nextX, 0, maxX),
+        y: clamp(nextY, 0, maxY)
+      }
+    }));
+  }, []);
+
+  const startNodeDrag = useCallback((nodeId: SignalNodeId, event: ReactPointerEvent<HTMLElement>) => {
+    const graph = graphRef.current;
+    if (!graph) return;
+
+    const graphRect = graph.getBoundingClientRect();
+    const position = nodePositions[nodeId];
+    const nodeLeft = graphRect.left + graphRect.width * (position.x / 100);
+    const nodeTop = graphRect.top + graphRect.height * (position.y / 100);
+
+    dragRef.current = {
+      nodeId,
+      offsetX: event.clientX - nodeLeft,
+      offsetY: event.clientY - nodeTop
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [nodePositions]);
+
+  const stopNodeDrag = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
 
   return (
     <section className="signal-workspace" aria-label="Syphon signal graph">
-      <div className="signal-graph">
+      <div className="signal-graph" ref={graphRef}>
         <svg className="signal-wires" viewBox="0 0 1000 520" role="presentation" aria-hidden="true">
-          <path className="signal-wire live" d="M150 118 C220 118 214 178 284 178" />
-          <path className="signal-wire live" d="M404 178 C486 178 494 260 576 260" />
-          <path className="signal-wire live" d="M686 260 C752 260 750 140 816 140" />
-          <path
-            className={consumerStatus === "connected" ? "signal-wire live" : "signal-wire pending"}
-            d="M884 188 C900 252 828 292 736 302"
-          />
-          <path className="signal-wire input" d="M292 394 C408 394 466 334 576 304" />
+          <defs>
+            <marker id="signal-arrow" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
+              <path d="M0,0 L8,4 L0,8 Z" className="signal-arrow" />
+            </marker>
+          </defs>
+          {wires.map((wire) => (
+            <path
+              key={wire.id}
+              className={`signal-wire ${wire.className}`}
+              d={signalWirePath(nodePositions, wire.from, wire.to)}
+              markerEnd="url(#signal-arrow)"
+            />
+          ))}
         </svg>
 
         <SignalNode
           className="node-camera"
+          id="camera"
           detail={`${fps} fps`}
           eyebrow="Source"
           label="Webcam"
+          onPointerDown={startNodeDrag}
+          onPointerMove={moveNode}
+          onPointerUp={stopNodeDrag}
+          position={nodePositions.camera}
           status={captureState === "running" ? "live" : captureState}
           value={captureState === "running" ? "Video" : "Idle"}
         />
         <SignalNode
           className="node-tracker"
+          id="tracker"
           detail={`${motion?.landmarkCount ?? 0} landmarks`}
           eyebrow="Analyze"
           label="MediaPipe"
+          onPointerDown={startNodeDrag}
+          onPointerMove={moveNode}
+          onPointerUp={stopNodeDrag}
+          position={nodePositions.tracker}
           status={motion ? "tracking" : "standby"}
           value={motion ? "Pose + Hands" : "No frame"}
         />
         <SignalNode
           className="node-core"
+          id="core"
           detail={signalTokens.join("  /  ")}
           eyebrow="FaceViz"
           label="Gesture Core"
+          onPointerDown={startNodeDrag}
+          onPointerMove={moveNode}
+          onPointerUp={stopNodeDrag}
+          position={nodePositions.core}
           status={motion?.dominantIntent ?? "Neutral stance"}
           value={motion?.dominantIntent ?? "Neutral stance"}
         />
         <SignalNode
           className="node-output"
+          id="output"
           detail={selectedSystemOutput?.detail ?? syphon?.detail ?? "Output bridge pending"}
           eyebrow={selectedOutputLabel}
           label={outputName}
+          onPointerDown={startNodeDrag}
+          onPointerMove={moveNode}
+          onPointerUp={stopNodeDrag}
+          position={nodePositions.output}
           status={outputState}
           value={outputTarget === "syphon" ? "Syphon Output" : "Spout Output"}
         />
         <SignalNode
           className="node-consumer"
+          id="consumer"
           detail={consumerDetail}
           eyebrow="Consumer"
           label={consumerLabel}
+          onPointerDown={startNodeDrag}
+          onPointerMove={moveNode}
+          onPointerUp={stopNodeDrag}
+          position={nodePositions.consumer}
           status={consumerStatus}
           value={primaryConsumer?.source === "inferred" ? "Inferred link" : consumerStatus === "connected" ? "Connected" : "Watching"}
         />
         <SignalNode
           className="node-input"
+          id="input"
           detail={inputSources[0]?.detail ?? "Receiver path is reserved in the graph."}
           eyebrow="Input"
           label={inputSources[0]?.serverName ?? inputName}
+          onPointerDown={startNodeDrag}
+          onPointerMove={moveNode}
+          onPointerUp={stopNodeDrag}
+          position={nodePositions.input}
           status={inputSources[0]?.status ?? "inactive"}
           value={inputSources[0]?.appName ?? "Syphon Input"}
         />
@@ -795,14 +979,38 @@ type SignalNodeProps = {
   className: string;
   detail: string;
   eyebrow: string;
+  id: SignalNodeId;
   label: string;
+  onPointerDown: (nodeId: SignalNodeId, event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
+  onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
+  position: SignalNodePosition;
   status: string;
   value: string;
 };
 
-function SignalNode({ className, detail, eyebrow, label, status, value }: SignalNodeProps) {
+function SignalNode({
+  className,
+  detail,
+  eyebrow,
+  id,
+  label,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+  position,
+  status,
+  value
+}: SignalNodeProps) {
   return (
-    <article className={`signal-node ${className}`}>
+    <article
+      className={`signal-node ${className}`}
+      onPointerCancel={onPointerUp}
+      onPointerDown={(event) => onPointerDown(id, event)}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      style={{ left: `${position.x}%`, top: `${position.y}%` }}
+    >
       <div className="signal-node-header">
         <span>{eyebrow}</span>
         <i>{status}</i>
@@ -813,6 +1021,34 @@ function SignalNode({ className, detail, eyebrow, label, status, value }: Signal
     </article>
   );
 }
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const signalNodeAnchor = (
+  positions: Record<SignalNodeId, SignalNodePosition>,
+  nodeId: SignalNodeId,
+  side: "left" | "right"
+) => {
+  const position = positions[nodeId];
+  const dimensions = signalNodeDimensions[nodeId];
+  const x = position.x * 10 + (side === "right" ? dimensions.width : 0);
+  const y = position.y * 5.2 + dimensions.height / 2;
+  return { x, y };
+};
+
+const signalWirePath = (
+  positions: Record<SignalNodeId, SignalNodePosition>,
+  from: SignalNodeId,
+  to: SignalNodeId
+) => {
+  const start = signalNodeAnchor(positions, from, "right");
+  const end = signalNodeAnchor(positions, to, "left");
+  const distance = Math.max(80, Math.abs(end.x - start.x) * 0.48);
+  const direction = end.x >= start.x ? 1 : -1;
+  const controlStartX = start.x + distance * direction;
+  const controlEndX = end.x - distance * direction;
+  return `M${start.x} ${start.y} C${controlStartX} ${start.y} ${controlEndX} ${end.y} ${end.x} ${end.y}`;
+};
 
 function GraphStatusRow({ label, value }: { label: string; value: string }) {
   return (
