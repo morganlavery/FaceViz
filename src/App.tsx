@@ -884,7 +884,11 @@ export function App() {
                 <button
                   key={effect.id}
                   className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
-                  onClick={() => setSelectedEffect(effect.id)}
+                  onClick={() => {
+                    setSelectedEffect(effect.id);
+                    setVisualMode("camera");
+                    setActiveWorkspace("preview");
+                  }}
                   title={effect.label}
                 >
                   <Icon size={17} />
