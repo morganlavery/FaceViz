@@ -29,6 +29,30 @@ export type TrackedPose = {
   rightWrist?: Vec2;
 };
 
+export type TrackedFace = {
+  landmarks: Landmark[];
+  center: Vec2;
+  bounds: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  nose?: Vec2;
+  forehead?: Vec2;
+  chin?: Vec2;
+  leftCheek?: Vec2;
+  rightCheek?: Vec2;
+  leftEye?: Vec2;
+  rightEye?: Vec2;
+  mouthLeft?: Vec2;
+  mouthRight?: Vec2;
+  upperLip?: Vec2;
+  lowerLip?: Vec2;
+  mouthOpenness: number;
+  smile: number;
+};
+
 export type GestureState = {
   handsUp: boolean;
   faceCover: boolean;
@@ -42,6 +66,7 @@ export type MotionFrame = {
   timestamp: number;
   hands: TrackedHand[];
   pose?: TrackedPose;
+  face?: TrackedFace;
   gestures: GestureState;
   confidence: number;
   landmarkCount: number;

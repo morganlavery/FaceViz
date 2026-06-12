@@ -1,5 +1,11 @@
 import { pointToCanvas } from "../tracking/gestureEngine";
 import type { Landmark, MotionFrame, Vec2 } from "../tracking/types";
+import {
+  MotionShaderPlayer,
+  resolveShaderParameterValues,
+  type ShaderParameterSettings,
+  type ShaderScene
+} from "./shaderPlayer";
 
 const HAND_CONNECTIONS = [
   [0, 1],
@@ -41,7 +47,12 @@ type CompositorOptions = {
   showRig: boolean;
   effectAmount: number;
   selectedEffect: string;
+  visualMode?: "camera" | "shader";
+  shaderScene?: ShaderScene;
+  shaderParameters?: Record<string, ShaderParameterSettings>;
 };
+
+let motionShaderPlayer: MotionShaderPlayer | null = null;
 
 const drawLine = (
   ctx: CanvasRenderingContext2D,
@@ -159,6 +170,65 @@ const drawStarShape = (
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
+};
+
+const drawMirrorComposite = (ctx: CanvasRenderingContext2D, width: number, height: number, amount: number) => {
+  const split = Math.round(width / 2);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(split, 0, width - split, height);
+  ctx.clip();
+  ctx.translate(width, 0);
+  ctx.scale(-1, 1);
+  ctx.globalAlpha = 0.98;
+  ctx.drawImage(ctx.canvas, 0, 0, split, height, 0, 0, split, height);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.globalAlpha = Math.min(0.34, 0.12 + amount * 0.12);
+  ctx.drawImage(ctx.canvas, Math.max(0, split - 90), 0, Math.min(180, width), height, split - 58, 0, 116, height);
+  ctx.drawImage(ctx.canvas, Math.max(0, split - 42), 0, Math.min(84, width), height, split - 24, 0, 48, height);
+  ctx.restore();
+
+  const seam = ctx.createLinearGradient(split - 28, 0, split + 28, 0);
+  seam.addColorStop(0, "rgba(0, 0, 0, 0)");
+  seam.addColorStop(0.48, `rgba(128, 255, 224, ${0.12 + amount * 0.12})`);
+  seam.addColorStop(0.52, `rgba(255, 240, 142, ${0.1 + amount * 0.1})`);
+  seam.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = seam;
+  ctx.fillRect(split - 28, 0, 56, height);
+  ctx.restore();
+};
+
+const drawEdgeDetectPass = (ctx: CanvasRenderingContext2D, width: number, height: number, amount: number) => {
+  const offset = Math.max(1, Math.round(1 + amount * 2));
+
+  ctx.save();
+  ctx.globalCompositeOperation = "difference";
+  ctx.globalAlpha = Math.min(0.86, 0.48 + amount * 0.2);
+  ctx.drawImage(ctx.canvas, -offset, 0, width, height);
+  ctx.drawImage(ctx.canvas, offset, 0, width, height);
+  ctx.drawImage(ctx.canvas, 0, -offset, width, height);
+  ctx.drawImage(ctx.canvas, 0, offset, width, height);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = `rgba(84, 255, 221, ${0.12 + amount * 0.08})`;
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = `rgba(255, 243, 132, ${0.18 + amount * 0.16})`;
+  ctx.lineWidth = Math.max(1, 1.4 * amount);
+  for (let y = 0; y < height; y += Math.max(14, Math.round(34 - amount * 10))) {
+    ctx.beginPath();
+    ctx.moveTo(0, y + 0.5);
+    ctx.lineTo(width, y + 0.5);
+    ctx.stroke();
+  }
   ctx.restore();
 };
 
@@ -526,6 +596,18 @@ const drawIdleStage = (ctx: CanvasRenderingContext2D, width: number, height: num
   ctx.restore();
 };
 
+const drawShaderUnavailable = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+  drawIdleStage(ctx, width, height);
+  ctx.save();
+  ctx.fillStyle = "rgba(10, 18, 18, 0.82)";
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#9fffc6";
+  ctx.font = `${Math.max(14, Math.floor(width / 46))}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.fillText("WebGL shader player unavailable", width / 2, height / 2);
+  ctx.restore();
+};
+
 const resizeCanvas = (canvas: HTMLCanvasElement) => {
   const rect = canvas.getBoundingClientRect();
   const ratio = canvas.classList.contains("output-canvas") ? 1 : window.devicePixelRatio || 1;
@@ -551,7 +633,19 @@ export const renderFrame = (
   const height = canvas.height;
   ctx.clearRect(0, 0, width, height);
 
-  if (video?.videoWidth && video.videoHeight) {
+  if (options.visualMode === "shader" && options.shaderScene && options.shaderParameters) {
+    try {
+      motionShaderPlayer ??= new MotionShaderPlayer();
+      const shaderValues = resolveShaderParameterValues(options.shaderScene, options.shaderParameters, motion);
+      const rendered = motionShaderPlayer.renderToCanvas(ctx, options.shaderScene, motion, shaderValues, options.effectAmount);
+      if (!rendered) {
+        drawShaderUnavailable(ctx, width, height);
+      }
+    } catch (error) {
+      console.warn(error);
+      drawShaderUnavailable(ctx, width, height);
+    }
+  } else if (video?.videoWidth && video.videoHeight) {
     ctx.save();
     ctx.translate(width, 0);
     ctx.scale(-1, 1);
@@ -561,14 +655,30 @@ export const renderFrame = (
     drawIdleStage(ctx, width, height);
   }
 
+  const baseAmount = Math.max(0.22, options.effectAmount);
+  if (options.visualMode === "shader") {
+    if (motion && options.showRig) {
+      drawRig(ctx, motion, width, height);
+    }
+    return;
+  }
+
+  if (options.selectedEffect === "mirror") {
+    drawMirrorComposite(ctx, width, height, baseAmount);
+  }
+
   ctx.fillStyle = "rgba(4, 8, 8, 0.08)";
   ctx.fillRect(0, 0, width, height);
+
+  if (options.selectedEffect === "edge") {
+    drawEdgeDetectPass(ctx, width, height, baseAmount);
+  }
 
   if (!motion) {
     return;
   }
 
-  const gestureAmount = Math.max(0.22, options.effectAmount);
+  const gestureAmount = baseAmount;
   if (motion.gestures.faceCover || options.selectedEffect === "leaves") {
     drawLeafSprouts(ctx, motion, width, height, gestureAmount);
   }

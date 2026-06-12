@@ -1,13 +1,16 @@
-import { FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
   Activity,
   Aperture,
   BadgeCheck,
+  Bot,
   Camera,
   Cpu,
+  Crown,
   Expand,
   Fingerprint,
   Flame,
+  FlipHorizontal2,
   Hand,
   Leaf,
   Loader2,
@@ -18,6 +21,7 @@ import {
   Play,
   RadioTower,
   ScanFace,
+  ScanLine,
   Settings2,
   ShieldAlert,
   Sparkles,
@@ -35,7 +39,7 @@ import {
   stopSystemOutput
 } from "./system/systemBridge";
 import type { SystemStatus, SystemSyphonPeer } from "./system/types";
-import { analyzeMotion, buildTrackedHand, buildTrackedPose } from "./tracking/gestureEngine";
+import { analyzeMotion, buildTrackedFace, buildTrackedHand, buildTrackedPose } from "./tracking/gestureEngine";
 import type { Handedness, Landmark, MotionFrame, PreviousHandSample } from "./tracking/types";
 
 type CaptureState = "idle" | "loading" | "running" | "error";
@@ -53,9 +57,16 @@ const HAND_MODEL =
   "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
 const POSE_MODEL =
   "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task";
+const FACE_MODEL =
+  "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task";
 
 const effects = [
   { id: "auto", label: "Auto", icon: Sparkles },
+  { id: "cyberbot", label: "Cyber Bot", icon: Bot },
+  { id: "popidol", label: "Pop Idol", icon: Crown },
+  { id: "comic", label: "Comic Hero", icon: Star },
+  { id: "mirror", label: "Mirror", icon: FlipHorizontal2 },
+  { id: "edge", label: "Edges", icon: ScanLine },
   { id: "leaves", label: "Leaves", icon: Leaf },
   { id: "fire", label: "Fire", icon: Flame },
   { id: "stickers", label: "Stickers", icon: Star },
@@ -160,6 +171,7 @@ export function App() {
   const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
+  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const previousHandsRef = useRef<Map<string, PreviousHandSample>>(new Map());
@@ -314,12 +326,14 @@ export function App() {
       video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
       video.currentTime !== lastVideoTimeRef.current &&
       handLandmarkerRef.current &&
-      poseLandmarkerRef.current
+      poseLandmarkerRef.current &&
+      faceLandmarkerRef.current
     ) {
       lastVideoTimeRef.current = video.currentTime;
       try {
         const handResults = handLandmarkerRef.current.detectForVideo(video, now);
         const poseResults = poseLandmarkerRef.current.detectForVideo(video, now);
+        const faceResults = faceLandmarkerRef.current.detectForVideo(video, now);
         const previous = previousHandsRef.current;
         const nextPrevious = new Map<string, PreviousHandSample>();
         const hands = (handResults.landmarks as Landmark[][]).map((landmarks, index) => {
@@ -331,7 +345,8 @@ export function App() {
         });
         previousHandsRef.current = nextPrevious;
         const pose = buildTrackedPose((poseResults.landmarks?.[0] as Landmark[] | undefined) ?? undefined);
-        const nextMotion = analyzeMotion(hands, pose, now);
+        const face = buildTrackedFace((faceResults.faceLandmarks?.[0] as Landmark[] | undefined) ?? undefined);
+        const nextMotion = analyzeMotion(hands, pose, face, now);
         motionRef.current = nextMotion;
         setMotion(nextMotion);
         setLatency(performance.now() - frameStartRef.current);
@@ -393,9 +408,9 @@ export function App() {
       video.srcObject = stream;
       await video.play();
 
-      if (!handLandmarkerRef.current || !poseLandmarkerRef.current) {
+      if (!handLandmarkerRef.current || !poseLandmarkerRef.current || !faceLandmarkerRef.current) {
         const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
-        const [handLandmarker, poseLandmarker] = await Promise.all([
+        const [handLandmarker, poseLandmarker, faceLandmarker] = await Promise.all([
           HandLandmarker.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath: HAND_MODEL,
@@ -417,10 +432,22 @@ export function App() {
             minPoseDetectionConfidence: 0.4,
             minPosePresenceConfidence: 0.4,
             minTrackingConfidence: 0.4
+          }),
+          FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: FACE_MODEL,
+              delegate: "GPU"
+            },
+            runningMode: "VIDEO",
+            numFaces: 1,
+            minFaceDetectionConfidence: 0.45,
+            minFacePresenceConfidence: 0.45,
+            minTrackingConfidence: 0.45
           })
         ]);
         handLandmarkerRef.current = handLandmarker;
         poseLandmarkerRef.current = poseLandmarker;
+        faceLandmarkerRef.current = faceLandmarker;
       }
 
       runningRef.current = true;
@@ -489,6 +516,7 @@ export function App() {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       handLandmarkerRef.current?.close();
       poseLandmarkerRef.current?.close();
+      faceLandmarkerRef.current?.close();
       outputStreamingRef.current = false;
       if (outputTimerRef.current !== null) {
         window.clearTimeout(outputTimerRef.current);
