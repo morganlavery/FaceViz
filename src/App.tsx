@@ -45,7 +45,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
-import { renderFrame, type CompositorOptions, type TrackingPreviewMode } from "./rendering/compositor";
+import {
+  renderFrame,
+  type CompositorOptions,
+  type TrackingPreviewMode,
+  type VisualDrumPadOverlayPad
+} from "./rendering/compositor";
 import {
   FACEVIZ_SHADER_PRESET_SCHEMA,
   SHADER_LIBRARY_STORAGE_KEY,
@@ -125,6 +130,19 @@ type GestureActionMatrixPreset = {
   schema: typeof GESTURE_ACTION_MATRIX_PRESET_SCHEMA;
   name: string;
   routes: GestureActionRoute[];
+};
+type VisualDrumPadMapping = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  parameterId: string;
+  value: number;
+  velocityThreshold: number;
+};
+type VisualDrumPadRuntime = {
+  cooldownUntil: number;
+  intensity: number;
+  lastHitAt: number;
 };
 type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
 type SignalNodePosition = {
@@ -311,12 +329,45 @@ const gestureLabels: Record<keyof MotionFrame["gestures"], string> = {
 const FACE_GESTURE_CALIBRATION_STORAGE_KEY = "faceviz.faceGestureCalibration.v1";
 const GESTURE_STATE_MACHINE_STORAGE_KEY = "faceviz.gestureStateMachine.v1";
 const GESTURE_ACTION_MATRIX_STORAGE_KEY = "faceviz.gestureActionMatrix.v1";
+const VISUAL_DRUM_PAD_STORAGE_KEY = "faceviz.visualDrumPads.v1";
 const WORKSPACE_LAYOUT_STORAGE_KEY = "faceviz.workspaceLayout.v1";
 const GESTURE_ACTION_MATRIX_PRESET_SCHEMA = "faceviz.gestureActionMatrix.v1";
 const defaultWorkspaceLayout: WorkspaceLayout = {
   railWidth: 310,
   stageHeight: 420
 };
+
+const VISUAL_DRUM_PAD_COUNT = 10;
+const VISUAL_DRUM_PAD_COOLDOWN_MS = 220;
+const VISUAL_DRUM_PAD_TIP_INDICES = [8, 12, 16, 20];
+const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = Array.from(
+  { length: VISUAL_DRUM_PAD_COUNT },
+  (_, index) => {
+    const columns = 5;
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    const width = 0.145;
+    const height = 0.15;
+    const gap = 0.024;
+    const totalWidth = columns * width + (columns - 1) * gap;
+    return {
+      x: (1 - totalWidth) / 2 + column * (width + gap),
+      y: 0.56 + row * 0.18,
+      width,
+      height
+    };
+  }
+);
+
+const createDefaultVisualDrumPads = (): VisualDrumPadMapping[] =>
+  Array.from({ length: VISUAL_DRUM_PAD_COUNT }, (_, index) => ({
+    id: `pad-${index + 1}`,
+    label: `Pad ${index + 1}`,
+    enabled: true,
+    parameterId: "",
+    value: index % 5 === 0 ? 1 : 0.18 + ((index % 5) / 4) * 0.76,
+    velocityThreshold: 0.18
+  }));
 
 const faceSignalControls: Array<{
   id: keyof Pick<
@@ -603,6 +654,41 @@ const normalizeGestureActionMatrix = (value: unknown): GestureActionRoute[] => {
   );
 };
 
+const normalizeVisualDrumPads = (value: unknown): VisualDrumPadMapping[] => {
+  const defaults = createDefaultVisualDrumPads();
+  const pads = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.pads) ? value.pads : defaults;
+  return defaults.map((fallback, index) => {
+    const pad = pads[index];
+    if (!isRecord(pad)) return fallback;
+
+    return {
+      id: typeof pad.id === "string" && pad.id.trim() ? pad.id.trim() : fallback.id,
+      label: typeof pad.label === "string" && pad.label.trim() ? pad.label.trim().slice(0, 16) : fallback.label,
+      enabled: typeof pad.enabled === "boolean" ? pad.enabled : fallback.enabled,
+      parameterId: typeof pad.parameterId === "string" ? pad.parameterId : fallback.parameterId,
+      value: typeof pad.value === "number" && Number.isFinite(pad.value) ? clampNumber(pad.value) : fallback.value,
+      velocityThreshold:
+        typeof pad.velocityThreshold === "number" && Number.isFinite(pad.velocityThreshold)
+          ? clampNumber(pad.velocityThreshold, 0, 0.8)
+          : fallback.velocityThreshold
+    };
+  });
+};
+
+const getVisualDrumPadParameter = (scene: ShaderScene, pad: VisualDrumPadMapping, index: number) => {
+  if (scene.parameters.length === 0) return undefined;
+  return scene.parameters.find((parameter) => parameter.id === pad.parameterId) ?? scene.parameters[index % scene.parameters.length];
+};
+
+const visualDrumPointInsidePad = (
+  point: { x: number; y: number },
+  pad: Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">
+) =>
+  point.x >= pad.x &&
+  point.x <= pad.x + pad.width &&
+  point.y >= pad.y &&
+  point.y <= pad.y + pad.height;
+
 const applyGestureActionCurve = (value: number, curve: GestureActionCurve) => {
   const next = clampNumber(value);
   if (curve === "easeIn") return next * next;
@@ -833,6 +919,10 @@ export function App() {
   const gestureStateMachineRef = useRef<GestureStateMachineMemory>(createGestureStateMachineMemory());
   const gestureStateMachineConfigRef = useRef<GestureStateMachineConfig>(defaultGestureStateMachineConfig);
   const gestureActionMatrixRef = useRef<GestureActionRoute[]>(createDefaultGestureActionMatrix());
+  const visualDrumPadsRef = useRef<VisualDrumPadMapping[]>(createDefaultVisualDrumPads());
+  const visualDrumPadRuntimeRef = useRef<Record<string, VisualDrumPadRuntime>>({});
+  const visualDrumPadInsideRef = useRef<Set<string>>(new Set());
+  const visualDrumPadOverlayRef = useRef<VisualDrumPadOverlayPad[]>([]);
   const activeShaderSceneRef = useRef<ShaderScene>(shaderScenes[0]);
   const outputTargetRef = useRef<OutputTarget>(getPreferredOutput());
   const outputStreamingRef = useRef(false);
@@ -906,6 +996,14 @@ export function App() {
       return normalizeGestureActionMatrix(stored ? JSON.parse(stored) : createDefaultGestureActionMatrix());
     } catch {
       return createDefaultGestureActionMatrix();
+    }
+  });
+  const [visualDrumPads, setVisualDrumPads] = useState<VisualDrumPadMapping[]>(() => {
+    try {
+      const stored = window.localStorage.getItem(VISUAL_DRUM_PAD_STORAGE_KEY);
+      return normalizeVisualDrumPads(stored ? JSON.parse(stored) : createDefaultVisualDrumPads());
+    } catch {
+      return createDefaultVisualDrumPads();
     }
   });
   const [gestureActionNotice, setGestureActionNotice] = useState("");
@@ -1405,6 +1503,11 @@ export function App() {
     gestureActionMatrixRef.current = gestureActionMatrix;
     window.localStorage.setItem(GESTURE_ACTION_MATRIX_STORAGE_KEY, JSON.stringify(gestureActionMatrix));
   }, [gestureActionMatrix]);
+
+  useEffect(() => {
+    visualDrumPadsRef.current = visualDrumPads;
+    window.localStorage.setItem(VISUAL_DRUM_PAD_STORAGE_KEY, JSON.stringify(visualDrumPads));
+  }, [visualDrumPads]);
 
   useEffect(() => {
     activeShaderSceneRef.current = activeShaderScene;

@@ -73,6 +73,19 @@ const HAND_GRAPHIC_ANCHORS = [0, 4, 8, 12, 16, 20];
 
 export type TrackingPreviewMode = "upper" | "full" | "face" | "handsFace";
 
+export type VisualDrumPadOverlayPad = {
+  id: string;
+  label: string;
+  parameterLabel: string;
+  value: number;
+  enabled: boolean;
+  intensity: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
 export type CompositorOptions = {
   showRig: boolean;
   effectAmount: number;
@@ -82,6 +95,7 @@ export type CompositorOptions = {
   visualMode?: "camera" | "shader";
   shaderScene?: ShaderScene;
   shaderParameters?: Record<string, ShaderParameterSettings>;
+  visualDrumPads?: VisualDrumPadOverlayPad[];
 };
 
 let motionShaderPlayer: MotionShaderPlayer | null = null;
@@ -1575,6 +1589,70 @@ const drawMirroredVideo = (ctx: CanvasRenderingContext2D, video: HTMLVideoElemen
   ctx.restore();
 };
 
+const drawVisualDrumPads = (
+  ctx: CanvasRenderingContext2D,
+  pads: VisualDrumPadOverlayPad[] | undefined,
+  width: number,
+  height: number
+) => {
+  if (!pads?.length) return;
+
+  ctx.save();
+  ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+
+  pads.forEach((pad, index) => {
+    if (!pad.enabled) return;
+
+    const x = pad.x * width;
+    const y = pad.y * height;
+    const padWidth = pad.width * width;
+    const padHeight = pad.height * height;
+    const radius = Math.max(7, Math.min(18, padHeight * 0.16));
+    const intensity = clamp(pad.intensity, 0, 1);
+    const hue = (172 + index * 31) % 360;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.shadowColor = `hsla(${hue}, 100%, 66%, ${0.28 + intensity * 0.42})`;
+    ctx.shadowBlur = 8 + intensity * 30;
+    drawRoundedRect(ctx, x, y, padWidth, padHeight, radius);
+    const fill = ctx.createLinearGradient(x, y, x + padWidth, y + padHeight);
+    fill.addColorStop(0, `hsla(${hue}, 88%, ${24 + intensity * 16}%, ${0.2 + intensity * 0.34})`);
+    fill.addColorStop(1, `hsla(${(hue + 44) % 360}, 94%, ${18 + intensity * 18}%, ${0.26 + intensity * 0.38})`);
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = `hsla(${hue}, 100%, ${64 + intensity * 14}%, ${0.44 + intensity * 0.5})`;
+    ctx.lineWidth = Math.max(1.2, 1.8 + intensity * 3.2);
+    ctx.stroke();
+
+    if (intensity > 0.02) {
+      ctx.beginPath();
+      ctx.arc(x + padWidth * 0.5, y + padHeight * 0.52, padHeight * (0.16 + intensity * 0.34), 0, Math.PI * 2);
+      ctx.strokeStyle = `hsla(${hue + 18}, 100%, 72%, ${0.24 * intensity})`;
+      ctx.lineWidth = Math.max(1.5, padHeight * 0.035);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = `rgba(229, 255, 249, ${0.68 + intensity * 0.28})`;
+    ctx.font = `800 ${Math.max(11, Math.floor(padHeight * 0.18))}px Inter, system-ui, sans-serif`;
+    ctx.textAlign = "left";
+    ctx.fillText(pad.label, x + padWidth * 0.1, y + padHeight * 0.28);
+    ctx.fillStyle = `rgba(157, 255, 230, ${0.68 + intensity * 0.26})`;
+    ctx.font = `900 ${Math.max(10, Math.floor(padHeight * 0.14))}px Inter, system-ui, sans-serif`;
+    ctx.fillText(pad.parameterLabel, x + padWidth * 0.1, y + padHeight * 0.56);
+    ctx.textAlign = "right";
+    ctx.fillStyle = `rgba(255, 236, 151, ${0.64 + intensity * 0.3})`;
+    ctx.fillText(pad.value.toFixed(2), x + padWidth * 0.9, y + padHeight * 0.78);
+    ctx.restore();
+  });
+
+  ctx.restore();
+};
+
 const resizeCanvas = (canvas: HTMLCanvasElement) => {
   if (canvas.classList.contains("output-canvas")) {
     const width = Math.max(2, Number(canvas.getAttribute("width")) || canvas.width);
@@ -1649,6 +1727,7 @@ export const renderFrame = (
       }
       drawRig(ctx, motion, width, height, trackingMode);
     }
+    drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
     return;
   }
 
@@ -1664,6 +1743,7 @@ export const renderFrame = (
   }
 
   if (!motion) {
+    drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
     return;
   }
 
@@ -1715,6 +1795,7 @@ export const renderFrame = (
     }
     drawRig(ctx, motion, width, height, trackingMode);
   }
+  drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
 };
 
 export const landmarkToUniform = (landmark: Landmark | undefined) => {
