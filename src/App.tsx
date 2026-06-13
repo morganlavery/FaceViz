@@ -343,16 +343,16 @@ const VISUAL_DRUM_PAD_TIP_INDICES = [8, 12, 16, 20];
 const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = Array.from(
   { length: VISUAL_DRUM_PAD_COUNT },
   (_, index) => {
-    const columns = 5;
-    const column = index % columns;
-    const row = Math.floor(index / columns);
-    const width = 0.125;
-    const height = 0.105;
-    const gap = 0.022;
-    const totalWidth = columns * width + (columns - 1) * gap;
+    const padsPerBank = VISUAL_DRUM_PAD_COUNT / 2;
+    const isRightBank = index >= padsPerBank;
+    const row = index % padsPerBank;
+    const width = 0.13;
+    const height = 0.085;
+    const gap = 0.014;
+    const top = 0.22;
     return {
-      x: (1 - totalWidth) / 2 + column * (width + gap),
-      y: 0.42 + row * 0.13,
+      x: isRightBank ? 0.88 - width : 0.12,
+      y: top + row * (height + gap),
       width,
       height
     };
