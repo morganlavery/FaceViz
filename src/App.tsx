@@ -3104,6 +3104,83 @@ type GestureActionMatrixEditorProps = {
   onUpdate: (routeId: string, patch: Partial<GestureActionRoute>) => void;
 };
 
+type VisualDrumPadEditorProps = {
+  activeScene: ShaderScene;
+  onReset: () => void;
+  onUpdate: (padId: string, patch: Partial<VisualDrumPadMapping>) => void;
+  pads: VisualDrumPadMapping[];
+};
+
+function VisualDrumPadEditor({ activeScene, onReset, onUpdate, pads }: VisualDrumPadEditorProps) {
+  return (
+    <div className="visual-drum-pad-editor" aria-label="Visual drum pad mapping">
+      <div className="visual-drum-pad-toolbar">
+        <div>
+          <p className="eyebrow">Visual Drum Pad</p>
+          <h3>10 Pad Surface</h3>
+        </div>
+        <button onClick={onReset} type="button">Reset</button>
+      </div>
+      <div className="visual-drum-pad-grid">
+        {pads.map((pad, index) => {
+          const parameter = getVisualDrumPadParameter(activeScene, pad, index);
+          return (
+            <article className={pad.enabled ? "visual-drum-pad-card" : "visual-drum-pad-card muted"} key={pad.id}>
+              <div className="visual-drum-pad-card-header">
+                <label>
+                  <input
+                    checked={pad.enabled}
+                    onChange={(event) => onUpdate(pad.id, { enabled: event.target.checked })}
+                    type="checkbox"
+                  />
+                  <span>{pad.label}</span>
+                </label>
+                <strong>{parameter?.label ?? "None"}</strong>
+              </div>
+              <label className="visual-drum-pad-target">
+                <span>Target</span>
+                <select
+                  value={activeScene.parameters.some((candidate) => candidate.id === pad.parameterId) ? pad.parameterId : ""}
+                  onChange={(event) => onUpdate(pad.id, { parameterId: event.target.value })}
+                >
+                  <option value="">Auto</option>
+                  {activeScene.parameters.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="visual-drum-pad-range">
+                <span>Value</span>
+                <input
+                  max="1"
+                  min="0"
+                  onChange={(event) => onUpdate(pad.id, { value: Number(event.target.value) })}
+                  step="0.01"
+                  type="range"
+                  value={pad.value}
+                />
+                <strong>{pad.value.toFixed(2)}</strong>
+              </label>
+              <label className="visual-drum-pad-range">
+                <span>Hit</span>
+                <input
+                  max="0.8"
+                  min="0"
+                  onChange={(event) => onUpdate(pad.id, { velocityThreshold: Number(event.target.value) })}
+                  step="0.01"
+                  type="range"
+                  value={pad.velocityThreshold}
+                />
+                <strong>{pad.velocityThreshold.toFixed(2)}</strong>
+              </label>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function GestureActionMatrixEditor({
   activeScene,
   fileInputRef,
