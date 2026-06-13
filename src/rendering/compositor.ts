@@ -79,9 +79,22 @@ export type VisualDrumPadOverlayPad = {
   id: string;
   label: string;
   parameterLabel: string;
+  xParameterLabel?: string;
+  yParameterLabel?: string;
   value: number;
   enabled: boolean;
   intensity: number;
+  active?: boolean;
+  holdIntensity?: number;
+  modulationDepth?: number;
+  pressure?: number;
+  pressureEnabled?: boolean;
+  pressureVelocity?: number;
+  zone?: "center" | "top" | "bottom" | "left" | "right";
+  zoneEnabled?: boolean;
+  xyEnabled?: boolean;
+  xyX?: number;
+  xyY?: number;
   x: number;
   y: number;
   width: number;
@@ -1670,6 +1683,7 @@ const drawVisualDrumPads = (
 ) => {
   if (!pads?.length) return;
 
+  const time = performance.now() / 1000;
   ctx.save();
   ctx.textBaseline = "middle";
   ctx.lineJoin = "round";
@@ -1683,7 +1697,16 @@ const drawVisualDrumPads = (
     const padHeight = pad.height * height;
     const radius = Math.max(7, Math.min(18, padHeight * 0.16));
     const intensity = clamp(pad.intensity, 0, 1);
+    const holdIntensity = clamp(pad.holdIntensity ?? 0, 0, 1);
+    const modulationDepth = clamp(pad.modulationDepth ?? 0, 0, 1);
+    const pressure = clamp(pad.pressure ?? 0, 0, 1);
+    const pressureVelocity = clamp(pad.pressureVelocity ?? 0, 0, 1);
+    const xyX = clamp(pad.xyX ?? 0.5, 0, 1);
+    const xyY = clamp(pad.xyY ?? 0.5, 0, 1);
+    const cursorX = x + padWidth * xyX;
+    const cursorY = y + padHeight * xyY;
     const hue = (172 + index * 31) % 360;
+    const pressureHue = (hue + pad.value * 92 + pressureVelocity * 36) % 360;
 
     ctx.save();
     ctx.globalCompositeOperation = "screen";
@@ -1699,9 +1722,136 @@ const drawVisualDrumPads = (
     ctx.lineWidth = Math.max(1.2, 1.8 + intensity * 3.2);
     ctx.stroke();
 
+    if (pad.zoneEnabled) {
+      const activeZone = pad.zone ?? "center";
+      const zones: Array<{
+        id: "center" | "top" | "bottom" | "left" | "right";
+        label: string;
+        rect: [number, number, number, number];
+      }> = [
+        { id: "top", label: "UP", rect: [x + padWidth * 0.28, y, padWidth * 0.44, padHeight * 0.28] },
+        { id: "bottom", label: "DN", rect: [x + padWidth * 0.28, y + padHeight * 0.72, padWidth * 0.44, padHeight * 0.28] },
+        { id: "left", label: "REV", rect: [x, y + padHeight * 0.28, padWidth * 0.28, padHeight * 0.44] },
+        { id: "right", label: "RPT", rect: [x + padWidth * 0.72, y + padHeight * 0.28, padWidth * 0.28, padHeight * 0.44] },
+        { id: "center", label: "HIT", rect: [x + padWidth * 0.28, y + padHeight * 0.28, padWidth * 0.44, padHeight * 0.44] }
+      ];
+
+      ctx.save();
+      drawRoundedRect(ctx, x + 1, y + 1, padWidth - 2, padHeight - 2, Math.max(5, radius - 2));
+      ctx.clip();
+      ctx.globalCompositeOperation = "screen";
+      zones.forEach((zone) => {
+        const [zoneX, zoneY, zoneWidth, zoneHeight] = zone.rect;
+        const active = zone.id === activeZone && pad.active;
+        ctx.fillStyle = `hsla(${hue + (active ? 42 : 0)}, 100%, ${active ? 58 : 42}%, ${active ? 0.28 + pressure * 0.18 : 0.075})`;
+        ctx.fillRect(zoneX, zoneY, zoneWidth, zoneHeight);
+        ctx.strokeStyle = `hsla(${hue + 28}, 100%, 70%, ${active ? 0.38 : 0.14})`;
+        ctx.lineWidth = Math.max(1, padHeight * 0.01);
+        ctx.strokeRect(zoneX, zoneY, zoneWidth, zoneHeight);
+        ctx.fillStyle = `rgba(230, 255, 247, ${active ? 0.74 : 0.28})`;
+        ctx.font = `900 ${Math.max(7, Math.floor(padHeight * 0.095))}px Inter, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.fillText(zone.label, zoneX + zoneWidth * 0.5, zoneY + zoneHeight * 0.5);
+      });
+      ctx.restore();
+    }
+
+    if (pad.xyEnabled) {
+      ctx.save();
+      drawRoundedRect(ctx, x + 1, y + 1, padWidth - 2, padHeight - 2, Math.max(5, radius - 2));
+      ctx.clip();
+      ctx.globalCompositeOperation = "screen";
+      ctx.strokeStyle = `hsla(${hue}, 100%, 72%, ${pad.active ? 0.2 : 0.11})`;
+      ctx.lineWidth = Math.max(1, padHeight * 0.012);
+      for (let line = 1; line < 3; line += 1) {
+        const lineX = x + (padWidth * line) / 3;
+        const lineY = y + (padHeight * line) / 3;
+        ctx.beginPath();
+        ctx.moveTo(lineX, y + padHeight * 0.12);
+        ctx.lineTo(lineX, y + padHeight * 0.88);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + padWidth * 0.1, lineY);
+        ctx.lineTo(x + padWidth * 0.9, lineY);
+        ctx.stroke();
+      }
+
+      if (pad.active || holdIntensity > 0.02) {
+        ctx.strokeStyle = `hsla(${hue + 18}, 100%, 76%, ${0.46 + Math.max(intensity, holdIntensity) * 0.34})`;
+        ctx.lineWidth = Math.max(1.2, padHeight * 0.018);
+        ctx.beginPath();
+        ctx.moveTo(cursorX, y + padHeight * 0.12);
+        ctx.lineTo(cursorX, y + padHeight * 0.88);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + padWidth * 0.1, cursorY);
+        ctx.lineTo(x + padWidth * 0.9, cursorY);
+        ctx.stroke();
+
+        const cursorGlow = ctx.createRadialGradient(cursorX, cursorY, 0, cursorX, cursorY, padHeight * 0.46);
+        cursorGlow.addColorStop(0, `hsla(${hue + 16}, 100%, 78%, ${0.34 + holdIntensity * 0.22})`);
+        cursorGlow.addColorStop(0.55, `hsla(${hue}, 100%, 58%, ${0.12 + holdIntensity * 0.12})`);
+        cursorGlow.addColorStop(1, `hsla(${hue}, 100%, 48%, 0)`);
+        ctx.fillStyle = cursorGlow;
+        ctx.beginPath();
+        ctx.arc(cursorX, cursorY, padHeight * (0.32 + holdIntensity * 0.18), 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = `rgba(255, 250, 217, ${0.72 + holdIntensity * 0.22})`;
+        ctx.beginPath();
+        ctx.arc(cursorX, cursorY, Math.max(3, padHeight * (0.045 + holdIntensity * 0.025)), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    if (pad.pressureEnabled && pressure > 0.02) {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      for (let ring = 0; ring < 3; ring += 1) {
+        const ringEnergy = Math.max(0, pressure - ring * 0.16);
+        if (ringEnergy <= 0) continue;
+        const phase = time * (5.4 + modulationDepth * 5.6) + index * 1.7 + ring * 1.2;
+        const wobbleX = Math.sin(phase) * padWidth * 0.018 * modulationDepth;
+        const wobbleY = Math.cos(phase * 0.83) * padHeight * 0.024 * modulationDepth;
+        const growth = ringEnergy * (0.11 + ring * 0.035) + pressureVelocity * 0.035;
+        drawRoundedRect(
+          ctx,
+          x - padWidth * growth + wobbleX,
+          y - padHeight * growth + wobbleY,
+          padWidth * (1 + growth * 2),
+          padHeight * (1 + growth * 2),
+          radius + padHeight * (0.15 + modulationDepth * 0.2 + ring * 0.04)
+        );
+        ctx.strokeStyle = `hsla(${pressureHue + ring * 22}, 100%, ${66 + ringEnergy * 14}%, ${0.24 + ringEnergy * 0.38})`;
+        ctx.lineWidth = Math.max(1.3, padHeight * (0.014 + ringEnergy * 0.034));
+        ctx.shadowColor = `hsla(${pressureHue + ring * 18}, 100%, 66%, ${0.18 + ringEnergy * 0.24})`;
+        ctx.shadowBlur = 8 + ringEnergy * 18;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    if (holdIntensity > 0.02) {
+      ctx.save();
+      ctx.globalCompositeOperation = "screen";
+      ctx.strokeStyle = `hsla(${hue + 34}, 100%, 72%, ${0.22 + holdIntensity * 0.42})`;
+      ctx.lineWidth = Math.max(1.4, padHeight * (0.02 + holdIntensity * 0.02));
+      drawRoundedRect(
+        ctx,
+        x - padWidth * 0.02 * holdIntensity,
+        y - padHeight * 0.03 * holdIntensity,
+        padWidth * (1 + 0.04 * holdIntensity),
+        padHeight * (1 + 0.06 * holdIntensity),
+        radius + padHeight * 0.18 * holdIntensity
+      );
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (intensity > 0.02) {
-      const centerX = x + padWidth * 0.5;
-      const centerY = y + padHeight * 0.52;
+      const centerX = pad.xyEnabled ? cursorX : x + padWidth * 0.5;
+      const centerY = pad.xyEnabled ? cursorY : y + padHeight * 0.52;
       const flash = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, padHeight * (0.5 + intensity * 0.56));
       flash.addColorStop(0, `hsla(${hue + 16}, 100%, 78%, ${0.42 * intensity})`);
       flash.addColorStop(0.45, `hsla(${hue}, 100%, 58%, ${0.16 * intensity})`);
@@ -1736,10 +1886,22 @@ const drawVisualDrumPads = (
     ctx.fillText(pad.label, x + padWidth * 0.1, y + padHeight * 0.28);
     ctx.fillStyle = `rgba(157, 255, 230, ${0.68 + intensity * 0.26})`;
     ctx.font = `900 ${Math.max(10, Math.floor(padHeight * 0.14))}px Inter, system-ui, sans-serif`;
-    ctx.fillText(pad.parameterLabel, x + padWidth * 0.1, y + padHeight * 0.56);
+    ctx.fillText(
+      pad.xyEnabled ? `${pad.xParameterLabel ?? "X"} / ${pad.yParameterLabel ?? "Y"}` : pad.parameterLabel,
+      x + padWidth * 0.1,
+      y + padHeight * 0.56
+    );
     ctx.textAlign = "right";
     ctx.fillStyle = `rgba(255, 236, 151, ${0.64 + intensity * 0.3})`;
-    ctx.fillText(pad.value.toFixed(2), x + padWidth * 0.9, y + padHeight * 0.78);
+    ctx.fillText(
+      pad.zoneEnabled && pad.active
+        ? (pad.zone ?? "center").toUpperCase()
+        : pad.xyEnabled
+          ? `${xyX.toFixed(2)} ${Math.max(0, 1 - xyY).toFixed(2)}`
+          : pad.value.toFixed(2),
+      x + padWidth * 0.9,
+      y + padHeight * 0.78
+    );
     ctx.restore();
   });
 
