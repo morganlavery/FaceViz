@@ -1367,10 +1367,9 @@ export function App() {
       }
 
       const deltaY = event.clientY - drag.startY;
-      const maxStageHeight = Math.max(320, Math.min(760, drag.workspaceHeight - 250));
       setWorkspaceLayout((current) => ({
         ...current,
-        stageHeight: clamp(drag.startStageHeight + deltaY, 280, maxStageHeight)
+        stageHeight: clamp(drag.startStageHeight + deltaY, 280, 920)
       }));
     };
 
