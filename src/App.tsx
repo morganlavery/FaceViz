@@ -346,13 +346,13 @@ const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width
     const columns = 5;
     const column = index % columns;
     const row = Math.floor(index / columns);
-    const width = 0.13;
-    const height = 0.12;
+    const width = 0.125;
+    const height = 0.105;
     const gap = 0.022;
     const totalWidth = columns * width + (columns - 1) * gap;
     return {
       x: (1 - totalWidth) / 2 + column * (width + gap),
-      y: 0.48 + row * 0.145,
+      y: 0.42 + row * 0.13,
       width,
       height
     };
