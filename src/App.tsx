@@ -43,9 +43,9 @@ import {
   Waves
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
-import { renderFrame, type CompositorOptions } from "./rendering/compositor";
+import { renderFrame, type CompositorOptions, type TrackingPreviewMode } from "./rendering/compositor";
 import {
   FACEVIZ_SHADER_PRESET_SCHEMA,
   SHADER_LIBRARY_STORAGE_KEY,
@@ -135,6 +135,20 @@ type SignalGraphSize = {
   width: number;
   height: number;
 };
+type WorkspaceLayout = {
+  railWidth: number;
+  stageHeight: number;
+};
+type WorkspaceResizeTarget = "rail" | "stage";
+type WorkspaceResizeDrag = {
+  target: WorkspaceResizeTarget;
+  startX: number;
+  startY: number;
+  startRailWidth: number;
+  startStageHeight: number;
+  shellWidth: number;
+  workspaceHeight: number;
+};
 
 const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
 const HAND_MODEL =
@@ -180,6 +194,13 @@ const workspaceTabIcons: Record<WorkspaceTab, typeof Activity> = {
   mapping: SlidersHorizontal,
   signal: Activity
 };
+
+const trackingPreviewModes: Array<{ id: TrackingPreviewMode; label: string; hudLabel: string; icon: typeof Activity }> = [
+  { id: "upper", label: "Head + Shoulders", hudLabel: "Upper Body", icon: ScanFace },
+  { id: "full", label: "Full Body", hudLabel: "Full Body", icon: Expand },
+  { id: "face", label: "Face Gestures", hudLabel: "Face Gestures", icon: Smile },
+  { id: "handsFace", label: "Hands + Face", hudLabel: "Hands + Face", icon: Hand }
+];
 
 const defaultShaderImportSource = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
@@ -290,7 +311,12 @@ const gestureLabels: Record<keyof MotionFrame["gestures"], string> = {
 const FACE_GESTURE_CALIBRATION_STORAGE_KEY = "faceviz.faceGestureCalibration.v1";
 const GESTURE_STATE_MACHINE_STORAGE_KEY = "faceviz.gestureStateMachine.v1";
 const GESTURE_ACTION_MATRIX_STORAGE_KEY = "faceviz.gestureActionMatrix.v1";
+const WORKSPACE_LAYOUT_STORAGE_KEY = "faceviz.workspaceLayout.v1";
 const GESTURE_ACTION_MATRIX_PRESET_SCHEMA = "faceviz.gestureActionMatrix.v1";
+const defaultWorkspaceLayout: WorkspaceLayout = {
+  railWidth: 310,
+  stageHeight: 420
+};
 
 const faceSignalControls: Array<{
   id: keyof Pick<
@@ -451,7 +477,7 @@ const fetchShadertoyImport = async (linkOrId: string) => {
   const unsupportedPasses =
     shader?.renderpass?.filter((renderPass) => renderPass.type && !["common", "image"].includes(renderPass.type)) ?? [];
   if (unsupportedPasses.length > 0) {
-    throw new Error("That Shadertoy uses multipass, sound, VR, or buffer passes that INFINIGHTCapture cannot run yet.");
+    throw new Error("That Shadertoy uses multipass, sound, VR, or buffer passes that this app cannot run yet.");
   }
 
   const pass =
@@ -463,7 +489,7 @@ const fetchShadertoyImport = async (linkOrId: string) => {
   }
   if (pass.inputs?.length) {
     const inputTypes = Array.from(new Set(pass.inputs.map((input) => input.ctype ?? "asset"))).join(", ");
-    throw new Error(`That Shadertoy uses ${inputTypes} inputs. INFINIGHTCapture URL import currently supports single-pass procedural shaders.`);
+    throw new Error(`That Shadertoy uses ${inputTypes} inputs. URL import currently supports single-pass procedural shaders.`);
   }
 
   return {
@@ -481,6 +507,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const clampNumber = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+const stripVisibleAppName = (value: string) => value.replace(/\bINFINIGHTCapture\s*/g, "").trim();
 
 const normalizeFaceGestureCalibration = (value: unknown): FaceGestureCalibration => {
   if (!isRecord(value)) {
@@ -642,13 +669,13 @@ const normalizeShaderSettings = (
 const parseINFINIGHTCaptureShaderPreset = (value: string, sourceUrl = "") => {
   const parsed = JSON.parse(value) as unknown;
   if (!isRecord(parsed) || parsed.schema !== FACEVIZ_SHADER_PRESET_SCHEMA) {
-    throw new Error("That file is not an INFINIGHTCapture shader preset.");
+    throw new Error("That file is not a compatible shader preset.");
   }
 
   const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
   const fragment = typeof parsed.fragment === "string" ? parsed.fragment : "";
   if (!name || !fragment.includes("mainImage")) {
-    throw new Error("INFINIGHTCapture presets need a name and a mainImage fragment.");
+    throw new Error("Shader presets need a name and a mainImage fragment.");
   }
 
   const parameters = Array.isArray(parsed.parameters)
@@ -662,7 +689,7 @@ const parseINFINIGHTCaptureShaderPreset = (value: string, sourceUrl = "") => {
     author: typeof parsed.author === "string" ? parsed.author : "",
     fragment,
     label: name,
-    license: typeof parsed.license === "string" ? parsed.license : "INFINIGHTCapture preset",
+    license: typeof parsed.license === "string" ? parsed.license : "Local preset",
     mappings,
     parameters,
     source: "preset" as const,
@@ -827,6 +854,7 @@ export function App() {
   const lastFpsSampleRef = useRef({ timestamp: performance.now(), frames: 0 });
   const frameStartRef = useRef(performance.now());
   const runningRef = useRef(false);
+  const workspaceResizeDragRef = useRef<WorkspaceResizeDrag | null>(null);
   const reducedMotion = useReducedMotion();
 
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
@@ -835,7 +863,7 @@ export function App() {
   const [motion, setMotion] = useState<MotionFrame | null>(null);
   const [fps, setFps] = useState(0);
   const [latency, setLatency] = useState(0);
-  const [mode, setMode] = useState<"upper" | "full">("upper");
+  const [mode, setMode] = useState<TrackingPreviewMode>("upper");
   const [showRig, setShowRig] = useState(true);
   const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
@@ -905,13 +933,31 @@ export function App() {
   const [shaderImportBusy, setShaderImportBusy] = useState(false);
   const [shaderFileDragActive, setShaderFileDragActive] = useState(false);
   const [showShaderCodeImport, setShowShaderCodeImport] = useState(false);
+  const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => {
+    try {
+      const stored = window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY);
+      if (!stored) return defaultWorkspaceLayout;
+      const parsed = JSON.parse(stored) as Partial<WorkspaceLayout>;
+      return {
+        railWidth: typeof parsed.railWidth === "number"
+          ? clamp(parsed.railWidth, 250, 560)
+          : defaultWorkspaceLayout.railWidth,
+        stageHeight: typeof parsed.stageHeight === "number"
+          ? clamp(parsed.stageHeight, 280, 760)
+          : defaultWorkspaceLayout.stageHeight
+      };
+    } catch {
+      return defaultWorkspaceLayout;
+    }
+  });
+  const [workspaceResizeTarget, setWorkspaceResizeTarget] = useState<WorkspaceResizeTarget | null>(null);
   const outputStatuses = useMemo(() => getOutputStatuses(), []);
   const displayOutputStatuses = outputStatuses.map((status) => {
     const systemOutput = systemStatus?.outputs.find((output) => output.target === status.target);
     return {
       ...status,
       available: systemOutput?.available ?? status.available,
-      detail: systemOutput?.detail ?? status.detail
+      detail: stripVisibleAppName(systemOutput?.detail ?? status.detail)
     };
   });
   const selectedOutput = displayOutputStatuses.find((status) => status.target === outputTarget) ?? displayOutputStatuses[0];
@@ -928,6 +974,35 @@ export function App() {
     () => resolveShaderParameterValues(activeShaderScene, shaderSettings, motion),
     [activeShaderScene, motion, shaderSettings]
   );
+  const activeTrackingMode = trackingPreviewModes.find((previewMode) => previewMode.id === mode) ?? trackingPreviewModes[0];
+  const appShellStyle = {
+    "--control-rail-width": `${workspaceLayout.railWidth}px`,
+    "--stage-panel-height": `${workspaceLayout.stageHeight}px`
+  } as CSSProperties;
+
+  const startWorkspaceResize = useCallback((target: WorkspaceResizeTarget, event: ReactPointerEvent<HTMLElement>) => {
+    if (target === "rail" && window.matchMedia("(max-width: 1000px)").matches) {
+      return;
+    }
+
+    const shell = document.querySelector<HTMLElement>(".app-shell");
+    const workspace = document.querySelector<HTMLElement>(".workspace");
+    const shellRect = shell?.getBoundingClientRect();
+    const workspaceRect = workspace?.getBoundingClientRect();
+    if (!shellRect || !workspaceRect) return;
+
+    event.preventDefault();
+    workspaceResizeDragRef.current = {
+      target,
+      startX: event.clientX,
+      startY: event.clientY,
+      startRailWidth: workspaceLayout.railWidth,
+      startStageHeight: workspaceLayout.stageHeight,
+      shellWidth: shellRect.width,
+      workspaceHeight: workspaceRect.height
+    };
+    setWorkspaceResizeTarget(target);
+  }, [workspaceLayout]);
 
   const toggleRailSection = useCallback((sectionId: RailSectionId) => {
     setCollapsedRailSections((current) => ({
@@ -1271,6 +1346,53 @@ export function App() {
   }, [importedShaderScenes]);
 
   useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify(workspaceLayout));
+  }, [workspaceLayout]);
+
+  useEffect(() => {
+    if (!workspaceResizeTarget) return;
+
+    const moveResize = (event: PointerEvent) => {
+      const drag = workspaceResizeDragRef.current;
+      if (!drag) return;
+
+      if (drag.target === "rail") {
+        const deltaX = event.clientX - drag.startX;
+        const maxRailWidth = Math.max(250, Math.min(560, drag.shellWidth - 520));
+        setWorkspaceLayout((current) => ({
+          ...current,
+          railWidth: clamp(drag.startRailWidth - deltaX, 250, maxRailWidth)
+        }));
+        return;
+      }
+
+      const deltaY = event.clientY - drag.startY;
+      const maxStageHeight = Math.max(320, Math.min(760, drag.workspaceHeight - 250));
+      setWorkspaceLayout((current) => ({
+        ...current,
+        stageHeight: clamp(drag.startStageHeight + deltaY, 280, maxStageHeight)
+      }));
+    };
+
+    const stopResize = () => {
+      workspaceResizeDragRef.current = null;
+      setWorkspaceResizeTarget(null);
+    };
+
+    document.body.classList.add("layout-resizing", `layout-resizing-${workspaceResizeTarget}`);
+    window.addEventListener("pointermove", moveResize);
+    window.addEventListener("pointerup", stopResize);
+    window.addEventListener("pointercancel", stopResize);
+
+    return () => {
+      document.body.classList.remove("layout-resizing", `layout-resizing-${workspaceResizeTarget}`);
+      window.removeEventListener("pointermove", moveResize);
+      window.removeEventListener("pointerup", stopResize);
+      window.removeEventListener("pointercancel", stopResize);
+    };
+  }, [workspaceResizeTarget]);
+
+  useEffect(() => {
     faceGestureCalibrationRef.current = faceGestureCalibration;
     window.localStorage.setItem(FACE_GESTURE_CALIBRATION_STORAGE_KEY, JSON.stringify(faceGestureCalibration));
   }, [faceGestureCalibration]);
@@ -1303,6 +1425,7 @@ export function App() {
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
       selectedEffect,
       visualMode,
+      trackingMode: mode,
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings
     };
@@ -1311,6 +1434,7 @@ export function App() {
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
       selectedEffect,
       includeCameraFeed: selectedOutputComposition.includeCameraFeed,
+      trackingMode: mode,
       visualMode: "shader",
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings
@@ -1324,6 +1448,7 @@ export function App() {
     selectedOutputComposition.showRig,
     shaderSettings,
     showRig,
+    mode,
     visualMode
   ]);
 
@@ -1659,7 +1784,10 @@ export function App() {
     : ["Idle"];
 
   return (
-    <main className="app-shell">
+    <main
+      className={workspaceResizeTarget ? `app-shell resizing-${workspaceResizeTarget}` : "app-shell"}
+      style={appShellStyle}
+    >
       <video ref={videoRef} className="source-video" playsInline muted />
       <canvas
         ref={outputCanvasRef}
@@ -1721,7 +1849,7 @@ export function App() {
             </div>
             <div className="hud-badge align-right">
               <span>Mode</span>
-              <strong>{visualMode === "shader" ? "Mocap Shader" : mode === "upper" ? "Upper Body" : "Full Body"}</strong>
+              <strong>{visualMode === "shader" ? "Mocap Shader" : activeTrackingMode.hudLabel}</strong>
             </div>
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
@@ -1737,15 +1865,35 @@ export function App() {
           )}
         </section>
 
+        {activeWorkspace !== "signal" && (
+          <button
+            className="layout-resize-handle stage-resize-handle"
+            onPointerDown={(event) => startWorkspaceResize("stage", event)}
+            title="Resize preview vertically"
+            type="button"
+            aria-label="Resize preview vertically"
+          >
+            <span />
+          </button>
+        )}
+
         {activeWorkspace !== "signal" ? (
           <>
             <section className="transport-row" aria-label="Capture controls">
-              <button className={mode === "upper" ? "mode-button active" : "mode-button"} onClick={() => setMode("upper")}>
-                Head + Shoulders
-              </button>
-              <button className={mode === "full" ? "mode-button active" : "mode-button"} onClick={() => setMode("full")}>
-                Full Body
-              </button>
+              {trackingPreviewModes.map((previewMode) => {
+                const ModeIcon = previewMode.icon;
+                return (
+                  <button
+                    className={mode === previewMode.id ? "mode-button active" : "mode-button"}
+                    key={previewMode.id}
+                    onClick={() => setMode(previewMode.id)}
+                    type="button"
+                  >
+                    <ModeIcon size={16} />
+                    <span>{previewMode.label}</span>
+                  </button>
+                );
+              })}
               {captureState === "running" ? (
                 <button className="stop-button" onClick={stopCapture}>
                   <Pause size={17} />
@@ -1777,6 +1925,7 @@ export function App() {
               <Metric icon={Cpu} label="Latency" value={`${Math.round(latency)} ms`} />
               <Metric icon={RadioTower} label="Rate" value={`${fps} fps`} />
               <Metric icon={Hand} label="Hands" value={`${motion?.hands.length ?? 0}/2`} />
+              <Metric icon={ScanFace} label="Face" value={motion?.face ? "Active" : "None"} />
               <Metric icon={Expand} label="Landmarks" value={`${motion?.landmarkCount ?? 0}`} />
               <Metric icon={Fingerprint} label="Intent" value={motion?.dominantIntent ?? "Neutral stance"} />
             </section>
@@ -1856,6 +2005,16 @@ export function App() {
           />
         )}
       </section>
+
+      <button
+        className="layout-resize-handle rail-resize-handle"
+        onPointerDown={(event) => startWorkspaceResize("rail", event)}
+        title="Resize panels horizontally"
+        type="button"
+        aria-label="Resize panels horizontally"
+      >
+        <span />
+      </button>
 
       <aside className="control-rail">
         <CollapsibleRailSection
@@ -2405,10 +2564,13 @@ function SignalGraph({
   const consumerLabel = primaryConsumer?.appName ?? (syphon?.hasOutputClients ? `${outputBusLabel} Client` : "Resolume / VJ App");
   const consumerDetail =
     primaryConsumer?.detail ??
-    (isOutputStreaming ? `INFINIGHTCapture Output is visible on the ${outputBusLabel} bus.` : "Waiting for INFINIGHTCapture Output.");
+    (isOutputStreaming ? `Output is visible on the ${outputBusLabel} bus.` : "Waiting for output.");
   const outputState = selectedSystemOutput?.state ?? (isOutputStreaming ? "publishing" : "bridge-ready");
   const outputName = syphon?.outputName ?? "INFINIGHTCapture Output";
   const inputName = syphon?.inputName ?? "INFINIGHTCapture Input";
+  const outputNodeLabel = outputName.replace(/^INFINIGHTCapture\s+/i, "");
+  const inputNodeLabel = inputName.replace(/^INFINIGHTCapture\s+/i, "");
+  const outputNodeDetail = stripVisibleAppName(selectedSystemOutput?.detail ?? syphon?.detail ?? "Output bridge pending");
   const signalTokens = [
     `${Math.round((motion?.confidence ?? 0) * 100)}% confidence`,
     `${motion?.hands.length ?? 0}/2 hands`,
@@ -2611,7 +2773,7 @@ function SignalGraph({
           className="node-core"
           id="core"
           detail={signalTokens.join("  /  ")}
-          eyebrow="INFINIGHTCapture"
+          eyebrow="Core"
           label="Gesture Core"
           onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
@@ -2624,9 +2786,9 @@ function SignalGraph({
         <SignalNode
           className="node-output"
           id="output"
-          detail={selectedSystemOutput?.detail ?? syphon?.detail ?? "Output bridge pending"}
+          detail={outputNodeDetail}
           eyebrow={selectedOutputLabel}
-          label={outputName}
+          label={outputNodeLabel}
           onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
@@ -2654,7 +2816,7 @@ function SignalGraph({
           id="input"
           detail={inputSources[0]?.detail ?? "Receiver path is reserved in the graph."}
           eyebrow="Input"
-          label={inputSources[0]?.serverName ?? inputName}
+          label={inputSources[0]?.serverName ? stripVisibleAppName(inputSources[0].serverName) : inputNodeLabel}
           onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
@@ -2666,7 +2828,7 @@ function SignalGraph({
       </div>
 
       <div className="signal-inspector">
-        <GraphStatusRow label="Output name" value={outputName} />
+        <GraphStatusRow label="Output name" value={outputNodeLabel} />
         <GraphStatusRow label="Client link" value={syphon?.hasOutputClients ? "attached" : "none"} />
         <GraphStatusRow label="Consumer" value={formatPeerList(outputConsumers)} />
         <GraphStatusRow label="Input source" value={formatPeerList(inputSources)} />
@@ -3151,7 +3313,7 @@ function GraphStatusRow({ label, value }: { label: string; value: string }) {
 
 function formatPeerList(peers: SystemSyphonPeer[]) {
   if (peers.length === 0) return "none";
-  return peers.map((peer) => `${peer.appName}${peer.source === "inferred" ? " inferred" : ""}`).join(", ");
+  return peers.map((peer) => `${stripVisibleAppName(peer.appName)}${peer.source === "inferred" ? " inferred" : ""}`).join(", ");
 }
 
 function EmptyState({ captureState, cameraIssue }: { captureState: CaptureState; cameraIssue: CameraIssue }) {

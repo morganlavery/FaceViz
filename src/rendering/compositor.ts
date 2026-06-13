@@ -30,7 +30,7 @@ const HAND_CONNECTIONS = [
   [19, 20]
 ];
 
-const POSE_CONNECTIONS = [
+const UPPER_POSE_CONNECTIONS = [
   [11, 12],
   [11, 13],
   [13, 15],
@@ -40,14 +40,45 @@ const POSE_CONNECTIONS = [
   [0, 12]
 ];
 
+const FULL_POSE_CONNECTIONS = [
+  ...UPPER_POSE_CONNECTIONS,
+  [11, 23],
+  [12, 24],
+  [23, 24],
+  [23, 25],
+  [25, 27],
+  [27, 29],
+  [27, 31],
+  [29, 31],
+  [24, 26],
+  [26, 28],
+  [28, 30],
+  [28, 32],
+  [30, 32]
+];
+
+const FACE_CONNECTIONS = [
+  [10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10],
+  [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246, 33],
+  [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466, 263],
+  [61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 61],
+  [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 78],
+  [70, 63, 105, 66, 107],
+  [336, 296, 334, 293, 300]
+];
+
+const FACE_KEY_INDICES = [1, 10, 13, 14, 33, 61, 152, 234, 263, 291, 454];
 const HAND_TIP_INDICES = [4, 8, 12, 16, 20];
 const HAND_GRAPHIC_ANCHORS = [0, 4, 8, 12, 16, 20];
+
+export type TrackingPreviewMode = "upper" | "full" | "face" | "handsFace";
 
 export type CompositorOptions = {
   showRig: boolean;
   effectAmount: number;
   selectedEffect: string;
   includeCameraFeed?: boolean;
+  trackingMode?: TrackingPreviewMode;
   visualMode?: "camera" | "shader";
   shaderScene?: ShaderScene;
   shaderParameters?: Record<string, ShaderParameterSettings>;
@@ -1258,14 +1289,118 @@ const drawCharacterFilter = (
   }
 };
 
-const drawRig = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number) => {
-  if (motion.pose?.landmarks) {
-    POSE_CONNECTIONS.forEach(([start, end]) => {
+const drawMetricTag = (
+  ctx: CanvasRenderingContext2D,
+  point: Vec2,
+  label: string,
+  value: number,
+  active: boolean,
+  color: string
+) => {
+  const text = `${label} ${Math.round(value * 100)}%`;
+  ctx.save();
+  ctx.font = `${Math.max(11, Math.floor(ctx.canvas.width / 78))}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  const tagWidth = Math.max(84, ctx.measureText(text).width + 18);
+  const tagHeight = 24;
+  const x = clamp(point.x, 8, Math.max(8, ctx.canvas.width - tagWidth - 8));
+  const y = clamp(point.y, 8, Math.max(8, ctx.canvas.height - tagHeight - 8));
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = active ? "rgba(65, 44, 13, 0.82)" : "rgba(4, 13, 17, 0.76)";
+  ctx.strokeStyle = active ? "rgba(255, 215, 123, 0.86)" : color;
+  ctx.lineWidth = 1;
+  drawRoundedRect(ctx, x, y, tagWidth, tagHeight, 7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = active ? "#ffe39a" : "#d8fbff";
+  ctx.fillText(text, x + 9, y + tagHeight / 2);
+  ctx.restore();
+};
+
+const drawFaceRig = (ctx: CanvasRenderingContext2D, face: TrackedFace, motion: MotionFrame, width: number, height: number) => {
+  const boundsMin = pointToCanvas({ x: face.bounds.maxX, y: face.bounds.minY }, width, height);
+  const boundsMax = pointToCanvas({ x: face.bounds.minX, y: face.bounds.maxY }, width, height);
+  const faceWidth = Math.max(24, boundsMax.x - boundsMin.x);
+  const faceHeight = Math.max(24, boundsMax.y - boundsMin.y);
+  const accent = motion.gestures.mouthOpen || motion.gestures.smile || motion.gestures.frown || motion.gestures.eyesClosed
+    ? "rgba(255, 215, 123, 0.92)"
+    : "rgba(96, 247, 255, 0.86)";
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = "rgba(96, 247, 255, 0.36)";
+  ctx.lineWidth = Math.max(1, Math.min(width, height) * 0.003);
+  drawRoundedRect(ctx, boundsMin.x, boundsMin.y, faceWidth, faceHeight, Math.max(8, faceWidth * 0.08));
+  ctx.stroke();
+
+  FACE_CONNECTIONS.forEach((connection, connectionIndex) => {
+    ctx.beginPath();
+    connection.forEach((index, pointIndex) => {
+      const landmark = face.landmarks[index];
+      if (!landmark) return;
+      const point = pointToCanvas(landmark, width, height);
+      if (pointIndex === 0) {
+        ctx.moveTo(point.x, point.y);
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    });
+    ctx.strokeStyle = connectionIndex <= 2 ? "rgba(93, 244, 255, 0.72)" : "rgba(255, 218, 112, 0.74)";
+    ctx.shadowColor = ctx.strokeStyle;
+    ctx.shadowBlur = 8;
+    ctx.stroke();
+  });
+
+  face.landmarks.forEach((landmark, index) => {
+    const point = pointToCanvas(landmark, width, height);
+    const isKey = FACE_KEY_INDICES.includes(index);
+    drawPoint(ctx, point, isKey ? 3.8 : 1.45, isKey ? accent : "rgba(185, 255, 247, 0.5)");
+  });
+  ctx.restore();
+
+  const tagX = boundsMax.x + 12;
+  const tagY = boundsMin.y;
+  drawMetricTag(ctx, { x: tagX, y: tagY }, "Mouth", face.mouthOpenness, motion.gestures.mouthOpen, "rgba(96, 247, 255, 0.74)");
+  drawMetricTag(ctx, { x: tagX, y: tagY + 30 }, "Smile", face.smile, motion.gestures.smile, "rgba(96, 247, 255, 0.74)");
+  drawMetricTag(ctx, { x: tagX, y: tagY + 60 }, "Frown", face.frown, motion.gestures.frown, "rgba(96, 247, 255, 0.74)");
+  drawMetricTag(ctx, { x: tagX, y: tagY + 90 }, "Eyes", face.eyeClosure, motion.gestures.eyesClosed, "rgba(96, 247, 255, 0.74)");
+};
+
+const drawRig = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  trackingMode: TrackingPreviewMode = "upper"
+) => {
+  const includePose = trackingMode === "upper" || trackingMode === "full";
+  const includeHands = trackingMode === "upper" || trackingMode === "full" || trackingMode === "handsFace";
+  const includeFace = trackingMode === "face" || trackingMode === "handsFace";
+
+  if (includePose && motion.pose?.landmarks) {
+    const poseConnections = trackingMode === "full" ? FULL_POSE_CONNECTIONS : UPPER_POSE_CONNECTIONS;
+    poseConnections.forEach(([start, end]) => {
       const a = motion.pose?.landmarks[start];
       const b = motion.pose?.landmarks[end];
       if (!a || !b) return;
       drawLine(ctx, pointToCanvas(a, width, height), pointToCanvas(b, width, height), 4, "rgba(54, 238, 247, 0.9)", "#36eef7");
     });
+
+    if (trackingMode === "full") {
+      motion.pose.landmarks.forEach((landmark) => {
+        if ((landmark.visibility ?? 1) < 0.25) return;
+        drawPoint(ctx, pointToCanvas(landmark, width, height), 2.8, "rgba(205, 255, 248, 0.82)");
+      });
+    }
+  }
+
+  if (includeFace && motion.face) {
+    drawFaceRig(ctx, motion.face, motion, width, height);
+  }
+
+  if (!includeHands) {
+    return;
   }
 
   motion.hands.forEach((hand) => {
@@ -1390,6 +1525,9 @@ const drawHandGestureMarkers = (ctx: CanvasRenderingContext2D, motion: MotionFra
   });
 };
 
+const shouldDrawHandGestureMarkers = (trackingMode: TrackingPreviewMode) =>
+  trackingMode === "upper" || trackingMode === "full" || trackingMode === "handsFace";
+
 const drawIdleStage = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
   const gradient = ctx.createLinearGradient(0, 0, width, height);
   gradient.addColorStop(0, "#07100e");
@@ -1505,8 +1643,11 @@ export const renderFrame = (
   const baseAmount = Math.max(0.22, options.effectAmount);
   if (options.visualMode === "shader") {
     if (motion && options.showRig) {
-      drawHandGestureMarkers(ctx, motion, width, height, baseAmount);
-      drawRig(ctx, motion, width, height);
+      const trackingMode = options.trackingMode ?? "upper";
+      if (shouldDrawHandGestureMarkers(trackingMode)) {
+        drawHandGestureMarkers(ctx, motion, width, height, baseAmount);
+      }
+      drawRig(ctx, motion, width, height, trackingMode);
     }
     return;
   }
@@ -1568,8 +1709,11 @@ export const renderFrame = (
     drawOrbitOverlays(ctx, motion, width, height, gestureAmount);
   }
   if (options.showRig) {
-    drawHandGestureMarkers(ctx, motion, width, height, gestureAmount);
-    drawRig(ctx, motion, width, height);
+    const trackingMode = options.trackingMode ?? "upper";
+    if (shouldDrawHandGestureMarkers(trackingMode)) {
+      drawHandGestureMarkers(ctx, motion, width, height, gestureAmount);
+    }
+    drawRig(ctx, motion, width, height, trackingMode);
   }
 };
 
