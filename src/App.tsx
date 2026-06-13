@@ -2040,7 +2040,7 @@ export function App() {
           <div className="brand-lockup" aria-label="INFINIGHTCapture">
             <img
               className="brand-logo"
-              src="/brand/infinightcapture_horizontal_logo.png"
+              src="brand/infinightcapture_horizontal_logo.png"
               alt="INFINIGHTCapture"
             />
           </div>

@@ -14,7 +14,7 @@
     "native:build:mac": "native/build-syphon-helper.sh",
     "native:build:win": "powershell -ExecutionPolicy Bypass -File native/build-spout-helper.ps1",
     "build": "tsc && vite build",
-    "package:mac": "npm run native:build && npm run build && electron-packager . INFINIGHTCapture --platform=darwin --arch=arm64 --out=release --overwrite --prune=true --extend-info=electron/Info.plist --extra-resource=native/build/SyphonFramePublisher --ignore='^/(release|src|native)(/|$)'",
+    "package:mac": "npm run native:build && npm run build && electron-packager . INFINIGHTCapture --platform=darwin --arch=arm64 --out=release --overwrite --prune=true --icon=build-resources/infinightcapture --extend-info=electron/Info.plist --extra-resource=native/build/SyphonFramePublisher --ignore='^/(release|src|native)(/|$)'",
     "package:win": "npm run native:build:win && npm run build && electron-packager . INFINIGHTCapture --platform=win32 --arch=x64 --out=release --overwrite --prune=true --extra-resource=native/build/SpoutFramePublisher.exe --extra-resource=native/build/SpoutLibrary.dll --ignore=\"^/(release|src|native)(/|$)\"",
     "preview": "vite preview --host 127.0.0.1"
   },
