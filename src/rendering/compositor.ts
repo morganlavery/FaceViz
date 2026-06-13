@@ -68,6 +68,8 @@ const FACE_CONNECTIONS = [
 ];
 
 const FACE_KEY_INDICES = [1, 10, 13, 14, 33, 61, 152, 234, 263, 291, 454];
+const FACE_LEFT_EYE_INDICES = [33, 133, 145, 153, 159, 160, 161, 163, 173, 246];
+const FACE_RIGHT_EYE_INDICES = [263, 362, 374, 380, 386, 387, 388, 390, 398, 466];
 const HAND_TIP_INDICES = [4, 8, 12, 16, 20];
 const HAND_GRAPHIC_ANCHORS = [0, 4, 8, 12, 16, 20];
 
@@ -1332,7 +1334,74 @@ const drawMetricTag = (
   ctx.restore();
 };
 
-const drawFaceRig = (ctx: CanvasRenderingContext2D, face: TrackedFace, motion: MotionFrame, width: number, height: number) => {
+const averageFaceLandmarks = (face: TrackedFace, indices: number[]): Vec2 | undefined => {
+  const points = indices.map((index) => face.landmarks[index]).filter((point): point is Landmark => Boolean(point));
+  if (!points.length) return undefined;
+  return {
+    x: points.reduce((total, point) => total + point.x, 0) / points.length,
+    y: points.reduce((total, point) => total + point.y, 0) / points.length
+  };
+};
+
+const drawInfinityEyePlaceholder = (
+  ctx: CanvasRenderingContext2D,
+  center: Vec2,
+  size: number,
+  angle: number,
+  active: boolean
+) => {
+  ctx.save();
+  ctx.translate(center.x, center.y);
+  ctx.rotate(angle);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `900 ${size}px Inter, system-ui, sans-serif`;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = active ? "rgba(0, 42, 52, 0.72)" : "rgba(2, 12, 16, 0.64)";
+  ctx.strokeStyle = active ? "rgba(0, 229, 255, 0.98)" : "rgba(95, 247, 255, 0.9)";
+  ctx.lineWidth = Math.max(1.4, size * 0.06);
+  drawRoundedRect(ctx, -size * 0.72, -size * 0.35, size * 1.44, size * 0.7, size * 0.2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.globalCompositeOperation = "screen";
+  ctx.shadowColor = "rgba(0, 229, 255, 0.98)";
+  ctx.shadowBlur = size * (active ? 0.46 : 0.32);
+  ctx.fillStyle = active ? "rgba(0, 229, 255, 1)" : "rgba(95, 247, 255, 0.98)";
+  ctx.fillText("∞", 0, size * -0.03);
+  ctx.restore();
+};
+
+const drawFaceEyePlaceholders = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  faceWidth: number
+) => {
+  const leftEye = averageFaceLandmarks(face, FACE_LEFT_EYE_INDICES);
+  const rightEye = averageFaceLandmarks(face, FACE_RIGHT_EYE_INDICES);
+  if (!leftEye || !rightEye) return;
+
+  const left = pointToCanvas(leftEye, width, height);
+  const right = pointToCanvas(rightEye, width, height);
+  const angle = Math.atan2(right.y - left.y, right.x - left.x);
+  const symbolSize = Math.max(18, Math.min(58, faceWidth * 0.18));
+  const active = motion.gestures.eyesClosed || motion.gestures.smile || motion.gestures.mouthOpen;
+
+  drawInfinityEyePlaceholder(ctx, left, symbolSize, angle, active);
+  drawInfinityEyePlaceholder(ctx, right, symbolSize, angle, active);
+};
+
+const drawFaceRig = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  showEyePlaceholders = false
+) => {
   const boundsMin = pointToCanvas({ x: face.bounds.maxX, y: face.bounds.minY }, width, height);
   const boundsMax = pointToCanvas({ x: face.bounds.minX, y: face.bounds.maxY }, width, height);
   const faceWidth = Math.max(24, boundsMax.x - boundsMin.x);
@@ -1373,6 +1442,10 @@ const drawFaceRig = (ctx: CanvasRenderingContext2D, face: TrackedFace, motion: M
   });
   ctx.restore();
 
+  if (showEyePlaceholders) {
+    drawFaceEyePlaceholders(ctx, face, motion, width, height, faceWidth);
+  }
+
   const tagX = boundsMax.x + 12;
   const tagY = boundsMin.y;
   drawMetricTag(ctx, { x: tagX, y: tagY }, "Mouth", face.mouthOpenness, motion.gestures.mouthOpen, "rgba(96, 247, 255, 0.74)");
@@ -1410,7 +1483,7 @@ const drawRig = (
   }
 
   if (includeFace && motion.face) {
-    drawFaceRig(ctx, motion.face, motion, width, height);
+    drawFaceRig(ctx, motion.face, motion, width, height, trackingMode === "face");
   }
 
   if (!includeHands) {
@@ -1627,11 +1700,31 @@ const drawVisualDrumPads = (
     ctx.stroke();
 
     if (intensity > 0.02) {
+      const centerX = x + padWidth * 0.5;
+      const centerY = y + padHeight * 0.52;
+      const flash = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, padHeight * (0.5 + intensity * 0.56));
+      flash.addColorStop(0, `hsla(${hue + 16}, 100%, 78%, ${0.42 * intensity})`);
+      flash.addColorStop(0.45, `hsla(${hue}, 100%, 58%, ${0.16 * intensity})`);
+      flash.addColorStop(1, `hsla(${hue}, 100%, 44%, 0)`);
+      ctx.fillStyle = flash;
       ctx.beginPath();
-      ctx.arc(x + padWidth * 0.5, y + padHeight * 0.52, padHeight * (0.16 + intensity * 0.34), 0, Math.PI * 2);
-      ctx.strokeStyle = `hsla(${hue + 18}, 100%, 72%, ${0.24 * intensity})`;
-      ctx.lineWidth = Math.max(1.5, padHeight * 0.035);
-      ctx.stroke();
+      ctx.arc(centerX, centerY, padHeight * (0.52 + intensity * 0.56), 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let ring = 0; ring < 3; ring += 1) {
+        const ringPulse = Math.max(0, intensity - ring * 0.18);
+        if (ringPulse <= 0) continue;
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, padHeight * (0.18 + ring * 0.22 + ringPulse * 0.48), 0, Math.PI * 2);
+        ctx.strokeStyle = `hsla(${hue + 18 + ring * 18}, 100%, 74%, ${0.34 * ringPulse})`;
+        ctx.lineWidth = Math.max(1.5, padHeight * (0.026 + ringPulse * 0.02));
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = `rgba(255, 248, 210, ${0.46 * intensity})`;
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, Math.max(2, padHeight * (0.05 + intensity * 0.035)), 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
 

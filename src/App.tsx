@@ -144,6 +144,13 @@ type VisualDrumPadRuntime = {
   intensity: number;
   lastHitAt: number;
 };
+type VisualDrumPadStrikeSample = {
+  point: {
+    x: number;
+    y: number;
+  };
+  timestamp: number;
+};
 type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
 type SignalNodePosition = {
   x: number;
@@ -337,8 +344,8 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
   stageHeight: 420
 };
 
-const VISUAL_DRUM_PAD_COUNT = 10;
-const VISUAL_DRUM_PAD_COOLDOWN_MS = 220;
+const VISUAL_DRUM_PAD_COUNT = 6;
+const VISUAL_DRUM_PAD_COOLDOWN_MS = 180;
 const VISUAL_DRUM_PAD_TIP_INDICES = [8, 12, 16, 20];
 const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = Array.from(
   { length: VISUAL_DRUM_PAD_COUNT },
@@ -346,10 +353,10 @@ const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width
     const padsPerBank = VISUAL_DRUM_PAD_COUNT / 2;
     const isRightBank = index >= padsPerBank;
     const row = index % padsPerBank;
-    const width = 0.13;
-    const height = 0.085;
-    const gap = 0.014;
-    const top = 0.22;
+    const width = 0.145;
+    const height = 0.11;
+    const gap = 0.036;
+    const top = 0.28;
     return {
       x: isRightBank ? 0.88 - width : 0.12,
       y: top + row * (height + gap),
@@ -365,8 +372,8 @@ const createDefaultVisualDrumPads = (): VisualDrumPadMapping[] =>
     label: `Pad ${index + 1}`,
     enabled: true,
     parameterId: "",
-    value: index % 5 === 0 ? 1 : 0.18 + ((index % 5) / 4) * 0.76,
-    velocityThreshold: 0.18
+    value: index % 3 === 0 ? 1 : 0.3 + ((index % 3) / 2) * 0.48,
+    velocityThreshold: 0.26
   }));
 
 const faceSignalControls: Array<{
@@ -923,6 +930,7 @@ export function App() {
   const visualDrumPadRuntimeRef = useRef<Record<string, VisualDrumPadRuntime>>({});
   const visualDrumPadInsideRef = useRef<Set<string>>(new Set());
   const visualDrumPadOverlayRef = useRef<VisualDrumPadOverlayPad[]>([]);
+  const visualDrumPadStrikeSamplesRef = useRef<Map<string, VisualDrumPadStrikeSample>>(new Map());
   const activeShaderSceneRef = useRef<ShaderScene>(shaderScenes[0]);
   const outputTargetRef = useRef<OutputTarget>(getPreferredOutput());
   const outputStreamingRef = useRef(false);
@@ -1121,6 +1129,8 @@ export function App() {
       videoRef.current.srcObject = null;
     }
     gestureStateMachineRef.current = createGestureStateMachineMemory();
+    visualDrumPadInsideRef.current = new Set();
+    visualDrumPadStrikeSamplesRef.current = new Map();
     setCameraIssue(null);
     setCaptureState("idle");
   }, []);
@@ -1286,13 +1296,53 @@ export function App() {
     const pads = visualDrumPadsRef.current;
     if (scene.parameters.length === 0 || pads.every((pad) => !pad.enabled)) {
       visualDrumPadInsideRef.current = new Set();
+      visualDrumPadStrikeSamplesRef.current = new Map();
       updateVisualDrumPadOverlay(nextMotion.timestamp);
       return;
     }
 
-    const previousInside = visualDrumPadInsideRef.current;
     const nextInside = new Set<string>();
+    const previousSamples = visualDrumPadStrikeSamplesRef.current;
+    const nextSamples = new Map<string, VisualDrumPadStrikeSample>();
     const hits: Array<{ parameter: ShaderParameterDefinition; value: number; pad: VisualDrumPadMapping }> = [];
+    const strikePoints = nextMotion.hands.flatMap((hand, handIndex) => {
+      const points = VISUAL_DRUM_PAD_TIP_INDICES.map((tipIndex) => ({
+        id: `${hand.handedness}-${handIndex}-tip-${tipIndex}`,
+        point: hand.landmarks[tipIndex],
+        fallbackImpact: hand.velocity
+      })).filter((candidate): candidate is { id: string; point: Landmark; fallbackImpact: number } => Boolean(candidate.point));
+
+      points.push({
+        id: `${hand.handedness}-${handIndex}-center`,
+        point: hand.centroid,
+        fallbackImpact: hand.velocity
+      });
+
+      return points.map((candidate) => {
+        const displayPoint = {
+          x: 1 - candidate.point.x,
+          y: candidate.point.y
+        };
+        const previous = previousSamples.get(candidate.id);
+        const deltaSeconds = previous ? Math.max(0.001, (nextMotion.timestamp - previous.timestamp) / 1000) : 1;
+        const pointSpeed = previous
+          ? clampNumber(
+              Math.hypot(displayPoint.x - previous.point.x, displayPoint.y - previous.point.y) / deltaSeconds / 1.25,
+              0,
+              1
+            )
+          : 0;
+        nextSamples.set(candidate.id, {
+          point: displayPoint,
+          timestamp: nextMotion.timestamp
+        });
+        return {
+          ...candidate,
+          displayPoint,
+          impact: Math.max(pointSpeed, candidate.fallbackImpact * 0.82)
+        };
+      });
+    });
 
     pads.forEach((pad, index) => {
       if (!pad.enabled) return;
@@ -1300,46 +1350,31 @@ export function App() {
       const parameter = getVisualDrumPadParameter(scene, pad, index);
       if (!layout || !parameter) return;
 
-      let inside = false;
-      let impact = 0;
-      for (const hand of nextMotion.hands) {
-        const candidates = [
-          ...VISUAL_DRUM_PAD_TIP_INDICES.map((tipIndex) => hand.landmarks[tipIndex]).filter(Boolean),
-          hand.centroid
-        ];
-        for (const point of candidates) {
-          const displayPoint = {
-            x: 1 - point.x,
-            y: point.y
-          };
-          if (!visualDrumPointInsidePad(displayPoint, layout)) continue;
-          inside = true;
-          impact = Math.max(impact, hand.velocity);
-        }
-      }
-
-      if (!inside) return;
+      const impacts = strikePoints
+        .filter((candidate) => visualDrumPointInsidePad(candidate.displayPoint, layout))
+        .map((candidate) => candidate.impact);
+      if (impacts.length === 0) return;
       nextInside.add(pad.id);
+      const impact = Math.max(...impacts);
 
       const runtime = visualDrumPadRuntimeRef.current[pad.id] ?? {
         cooldownUntil: 0,
         intensity: 0,
         lastHitAt: 0
       };
-      const entered = !previousInside.has(pad.id);
-      const velocityHit = impact >= pad.velocityThreshold;
-      if ((entered || velocityHit) && nextMotion.timestamp >= runtime.cooldownUntil) {
+      if (impact >= pad.velocityThreshold && nextMotion.timestamp >= runtime.cooldownUntil) {
         const mappedValue = parameter.min + pad.value * (parameter.max - parameter.min);
         hits.push({ parameter, value: mappedValue, pad });
         visualDrumPadRuntimeRef.current[pad.id] = {
           cooldownUntil: nextMotion.timestamp + VISUAL_DRUM_PAD_COOLDOWN_MS,
-          intensity: Math.max(0.72, impact),
+          intensity: Math.max(0.86, impact),
           lastHitAt: nextMotion.timestamp
         };
       }
     });
 
     visualDrumPadInsideRef.current = nextInside;
+    visualDrumPadStrikeSamplesRef.current = nextSamples;
     if (hits.length > 0) {
       setShaderSettings((current) => {
         let changed = false;
@@ -1527,6 +1562,8 @@ export function App() {
       runningRef.current = true;
       lastVideoTimeRef.current = -1;
       previousHandsRef.current.clear();
+      visualDrumPadInsideRef.current = new Set();
+      visualDrumPadStrikeSamplesRef.current = new Map();
       gestureStateMachineRef.current = createGestureStateMachineMemory();
       setCaptureState("running");
     } catch (nextError) {
@@ -1953,6 +1990,7 @@ export function App() {
     setVisualDrumPads(createDefaultVisualDrumPads());
     visualDrumPadRuntimeRef.current = {};
     visualDrumPadInsideRef.current = new Set();
+    visualDrumPadStrikeSamplesRef.current = new Map();
   }, []);
 
   const exportGestureActionMatrix = useCallback(() => {
@@ -3117,7 +3155,7 @@ function VisualDrumPadEditor({ activeScene, onReset, onUpdate, pads }: VisualDru
       <div className="visual-drum-pad-toolbar">
         <div>
           <p className="eyebrow">Visual Drum Pad</p>
-          <h3>10 Pad Surface</h3>
+          <h3>{pads.length} Pad Surface</h3>
         </div>
         <button onClick={onReset} type="button">Reset</button>
       </div>
@@ -3162,9 +3200,9 @@ function VisualDrumPadEditor({ activeScene, onReset, onUpdate, pads }: VisualDru
                 <strong>{pad.value.toFixed(2)}</strong>
               </label>
               <label className="visual-drum-pad-range">
-                <span>Hit</span>
+                <span>Strike</span>
                 <input
-                  max="0.8"
+                  max="1"
                   min="0"
                   onChange={(event) => onUpdate(pad.id, { velocityThreshold: Number(event.target.value) })}
                   step="0.01"
