@@ -8,8 +8,8 @@ INFINIGHTCapture is being built as a standalone app that tracks upper-body pose,
 
 - Webcam capture surface
 - MediaPipe hand and pose tracking
-- Upper-body tracking overlay
-- Gesture analysis for face cover, hands up, pinch, open palm, and fast motion
+- Upper-body and face tracking overlay
+- Gesture analysis for face cover, hands up, pinch, open palm, fast motion, mouth open, smile, frown, eyes closed, ear pull, and chin lift
 - Canvas compositor with fire, melt, warp, and bloom effects
 - Syphon/Spout output target UI scaffold
 - Electron shell for standalone desktop packaging
@@ -17,6 +17,10 @@ INFINIGHTCapture is being built as a standalone app that tracks upper-body pose,
 - Runtime status panel for browser preview vs desktop shell
 - macOS camera permission bridge for the desktop shell
 - Motion-reactive shader player with saved Shadertoy-style, raw URL, file, and preset imports
+- Facial gesture sources for shader mappings and GLSL uniforms
+- Face Control panel for persisted gesture threshold calibration and touch-gesture tuning
+- Gesture state machine for started, held, released, repeated, cooldown, smoothing, and latch states
+- Gesture action matrix for routing gesture events to shader parameters, camera effects, output composition, and exportable/importable matrix presets
 - Syphon/Spout output composition options for shader-only, shader plus wireframe, or shader plus wireframe plus live feed
 
 ## Run

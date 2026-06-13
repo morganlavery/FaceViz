@@ -9,6 +9,12 @@ export type ShaderMotionSource =
   | "handsUp"
   | "faceCover"
   | "openPalm"
+  | "mouthOpen"
+  | "smile"
+  | "frown"
+  | "eyesClosed"
+  | "earPull"
+  | "chinPull"
   | "noseX"
   | "noseY";
 
@@ -44,6 +50,8 @@ type MotionUniforms = {
   motion: [number, number, number, number];
   pose: [number, number, number, number];
   gestures: [number, number, number, number];
+  face: [number, number, number, number];
+  faceGestures: [number, number, number, number];
 };
 
 const VERTEX_SHADER = `
@@ -62,6 +70,8 @@ uniform vec4 iMouse;
 uniform vec4 fvMotion;
 uniform vec4 fvPose;
 uniform vec4 fvGestures;
+uniform vec4 fvFace;
+uniform vec4 fvFaceGestures;
 uniform vec4 fvParamA;
 uniform vec4 fvParamB;
 uniform vec4 fvParamC;
@@ -82,6 +92,12 @@ export const shaderMotionSources: Array<{ id: ShaderMotionSource; label: string 
   { id: "handsUp", label: "Hands up" },
   { id: "faceCover", label: "Face cover" },
   { id: "openPalm", label: "Open palm" },
+  { id: "mouthOpen", label: "Mouth open" },
+  { id: "smile", label: "Smile" },
+  { id: "frown", label: "Frown" },
+  { id: "eyesClosed", label: "Eyes closed" },
+  { id: "earPull", label: "Ear pull" },
+  { id: "chinPull", label: "Chin lift" },
   { id: "noseX", label: "Nose X" },
   { id: "noseY", label: "Nose Y" }
 ];
@@ -393,7 +409,9 @@ const getMotionUniforms = (motion: MotionFrame | null): MotionUniforms => {
     return {
       motion: [0, 0, 0, 0],
       pose: [0.5, 0.5, 0, 0],
-      gestures: [0, 0, 0, 1]
+      gestures: [0, 0, 0, 1],
+      face: [0, 0, 0, 0],
+      faceGestures: [0, 0, 0, 0]
     };
   }
 
@@ -414,6 +432,18 @@ const getMotionUniforms = (motion: MotionFrame | null): MotionUniforms => {
       motion.gestures.faceCover ? 1 : 0,
       motion.gestures.openPalm ? 1 : 0,
       motion.gestures.fastMotion ? 1 : 0
+    ],
+    face: [
+      clamp(motion.face?.mouthOpenness ?? 0),
+      clamp(motion.face?.smile ?? 0),
+      clamp(motion.face?.frown ?? 0),
+      clamp(motion.face?.eyeClosure ?? 0)
+    ],
+    faceGestures: [
+      motion.gestures.mouthOpen ? 1 : 0,
+      motion.gestures.eyesClosed ? 1 : 0,
+      motion.gestures.earPull ? 1 : 0,
+      motion.gestures.chinPull ? 1 : 0
     ]
   };
 };
@@ -435,6 +465,18 @@ export const getMotionSignalValue = (source: ShaderMotionSource, motion: MotionF
       return uniforms.gestures[1];
     case "openPalm":
       return uniforms.gestures[2];
+    case "mouthOpen":
+      return uniforms.face[0];
+    case "smile":
+      return uniforms.face[1];
+    case "frown":
+      return uniforms.face[2];
+    case "eyesClosed":
+      return uniforms.face[3];
+    case "earPull":
+      return uniforms.faceGestures[2];
+    case "chinPull":
+      return uniforms.faceGestures[3];
     case "noseX":
       return uniforms.pose[0];
     case "noseY":
@@ -541,6 +583,20 @@ export class MotionShaderPlayer {
       uniforms.gestures[1],
       uniforms.gestures[2],
       uniforms.gestures[3]
+    );
+    gl.uniform4f(
+      gl.getUniformLocation(this.program, "fvFace"),
+      uniforms.face[0],
+      uniforms.face[1],
+      uniforms.face[2],
+      uniforms.face[3]
+    );
+    gl.uniform4f(
+      gl.getUniformLocation(this.program, "fvFaceGestures"),
+      uniforms.faceGestures[0],
+      uniforms.faceGestures[1],
+      uniforms.faceGestures[2],
+      uniforms.faceGestures[3]
     );
     gl.uniform4f(gl.getUniformLocation(this.program, "fvParamA"), paramA[0], paramA[1], paramA[2], paramA[3]);
     gl.uniform4f(gl.getUniformLocation(this.program, "fvParamB"), paramB[0], paramB[1], paramB[2], paramB[3]);

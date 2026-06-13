@@ -71,8 +71,30 @@ import {
   stopSystemOutput
 } from "./system/systemBridge";
 import type { SystemStatus, SystemSyphonPeer } from "./system/types";
-import { analyzeMotion, buildTrackedFace, buildTrackedHand, buildTrackedPose } from "./tracking/gestureEngine";
-import type { Handedness, Landmark, MotionFrame, PreviousHandSample } from "./tracking/types";
+import {
+  analyzeMotion,
+  buildTrackedFace,
+  buildTrackedHand,
+  buildTrackedPose,
+  defaultFaceGestureCalibration
+} from "./tracking/gestureEngine";
+import {
+  createGestureStateMachineMemory,
+  defaultGestureStateMachineConfig,
+  gestureControlIds,
+  updateGestureStateMachine,
+  type GestureStateMachineMemory
+} from "./tracking/gestureStateMachine";
+import type {
+  FaceGestureCalibration,
+  GestureControlId,
+  GestureControlState,
+  GestureStateMachineConfig,
+  Handedness,
+  Landmark,
+  MotionFrame,
+  PreviousHandSample
+} from "./tracking/types";
 
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
@@ -80,7 +102,30 @@ type WorkspaceTab = "preview" | "shader" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
 type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
-type RailSectionId = "output" | "system" | "shader" | "effects" | "tracking";
+type RailSectionId = "output" | "system" | "shader" | "effects" | "face" | "tracking";
+type GestureActionTrigger = "started" | "held" | "released" | "repeated" | "latched";
+type GestureActionType = "shaderParameter" | "effect" | "outputMode" | "keyboard" | "midi" | "osc";
+type GestureActionCurve = "linear" | "easeIn" | "easeOut" | "snap";
+type GestureActionRoute = {
+  id: string;
+  enabled: boolean;
+  gestureId: GestureControlId;
+  trigger: GestureActionTrigger;
+  actionType: GestureActionType;
+  shaderParameterId: string;
+  effectId: string;
+  outputMode: OutputCompositionMode;
+  min: number;
+  max: number;
+  invert: boolean;
+  curve: GestureActionCurve;
+  holdMs: number;
+};
+type GestureActionMatrixPreset = {
+  schema: typeof GESTURE_ACTION_MATRIX_PRESET_SCHEMA;
+  name: string;
+  routes: GestureActionRoute[];
+};
 type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
 type SignalNodePosition = {
   x: number;
@@ -227,6 +272,134 @@ const signalNodeDimensions: Record<SignalNodeId, { width: number; height: number
   input: { width: 190, height: 116 }
 };
 
+const gestureLabels: Record<keyof MotionFrame["gestures"], string> = {
+  handsUp: "Hands up",
+  faceCover: "Face cover",
+  pinch: "Pinch",
+  openPalm: "Open palm",
+  fastMotion: "Fast motion",
+  mouthOpen: "Mouth open",
+  smile: "Smile",
+  frown: "Frown",
+  eyesClosed: "Eyes closed",
+  earPull: "Ear pull",
+  chinPull: "Chin lift",
+  neutral: "Neutral"
+};
+
+const FACE_GESTURE_CALIBRATION_STORAGE_KEY = "faceviz.faceGestureCalibration.v1";
+const GESTURE_STATE_MACHINE_STORAGE_KEY = "faceviz.gestureStateMachine.v1";
+const GESTURE_ACTION_MATRIX_STORAGE_KEY = "faceviz.gestureActionMatrix.v1";
+const GESTURE_ACTION_MATRIX_PRESET_SCHEMA = "faceviz.gestureActionMatrix.v1";
+
+const faceSignalControls: Array<{
+  id: keyof Pick<
+    FaceGestureCalibration,
+    "mouthOpenThreshold" | "smileThreshold" | "frownThreshold" | "eyesClosedThreshold"
+  >;
+  label: string;
+  signal: "mouthOpenness" | "smile" | "frown" | "eyeClosure";
+  min: number;
+  max: number;
+  neutralMargin: number;
+}> = [
+  { id: "mouthOpenThreshold", label: "Mouth Open", signal: "mouthOpenness", min: 0.08, max: 0.95, neutralMargin: 0.14 },
+  { id: "smileThreshold", label: "Smile", signal: "smile", min: 0.08, max: 0.95, neutralMargin: 0.12 },
+  { id: "frownThreshold", label: "Frown", signal: "frown", min: 0.08, max: 0.95, neutralMargin: 0.12 },
+  { id: "eyesClosedThreshold", label: "Eyes Closed", signal: "eyeClosure", min: 0.12, max: 0.96, neutralMargin: 0.18 }
+];
+
+const faceTouchControls: Array<{
+  id: keyof Pick<FaceGestureCalibration, "earPullRadius" | "earPullPinchThreshold" | "chinPullRadius" | "chinPullLiftThreshold">;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+}> = [
+  { id: "earPullRadius", label: "Ear Reach", min: 0.16, max: 0.5, step: 0.01 },
+  { id: "earPullPinchThreshold", label: "Ear Grip", min: 0.1, max: 0.8, step: 0.01 },
+  { id: "chinPullRadius", label: "Chin Reach", min: 0.14, max: 0.42, step: 0.01 },
+  { id: "chinPullLiftThreshold", label: "Chin Lift Speed", min: 0.04, max: 0.36, step: 0.01 }
+];
+
+const gestureMachineControls: Array<{
+  id: keyof Omit<GestureStateMachineConfig, "latchGestures">;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+  suffix: string;
+}> = [
+  { id: "debounceMs", label: "Debounce", min: 0, max: 420, step: 10, suffix: "ms" },
+  { id: "releaseDebounceMs", label: "Release", min: 0, max: 520, step: 10, suffix: "ms" },
+  { id: "holdMs", label: "Hold", min: 0, max: 1600, step: 20, suffix: "ms" },
+  { id: "cooldownMs", label: "Cooldown", min: 0, max: 1600, step: 20, suffix: "ms" },
+  { id: "repeatMs", label: "Repeat", min: 0, max: 3200, step: 50, suffix: "ms" },
+  { id: "smoothing", label: "Smoothing", min: 0, max: 0.95, step: 0.01, suffix: "" }
+];
+
+const gestureActionTriggers: Array<{ id: GestureActionTrigger; label: string }> = [
+  { id: "started", label: "Started" },
+  { id: "held", label: "Held" },
+  { id: "released", label: "Released" },
+  { id: "repeated", label: "Repeat" },
+  { id: "latched", label: "Latched" }
+];
+
+const gestureActionTypes: Array<{ id: GestureActionType; label: string }> = [
+  { id: "shaderParameter", label: "Shader Parameter" },
+  { id: "effect", label: "Effect" },
+  { id: "outputMode", label: "Output Mode" },
+  { id: "keyboard", label: "Keyboard" },
+  { id: "midi", label: "MIDI" },
+  { id: "osc", label: "OSC" }
+];
+
+const gestureActionCurves: Array<{ id: GestureActionCurve; label: string }> = [
+  { id: "linear", label: "Linear" },
+  { id: "easeIn", label: "Ease In" },
+  { id: "easeOut", label: "Ease Out" },
+  { id: "snap", label: "Snap" }
+];
+
+const createGestureActionRoute = (
+  id: string,
+  gestureId: GestureControlId,
+  trigger: GestureActionTrigger,
+  actionType: GestureActionType
+): GestureActionRoute => ({
+  id,
+  enabled: true,
+  gestureId,
+  trigger,
+  actionType,
+  shaderParameterId: "",
+  effectId: "auto",
+  outputMode: "shaderWire",
+  min: 0,
+  max: 1,
+  invert: false,
+  curve: "linear",
+  holdMs: 0
+});
+
+const createDefaultGestureActionMatrix = (): GestureActionRoute[] => [
+  {
+    ...createGestureActionRoute("smile-bloom", "smile", "started", "shaderParameter"),
+    shaderParameterId: "bloom",
+    min: 0.72,
+    max: 1
+  },
+  {
+    ...createGestureActionRoute("mouth-open-effect", "mouthOpen", "started", "effect"),
+    effectId: "bloom"
+  },
+  {
+    ...createGestureActionRoute("eyes-closed-output", "eyesClosed", "started", "outputMode"),
+    outputMode: "shader"
+  }
+];
+
 const shaderPresetFilePattern = /\.(infinightcaptureshader|facevizshader)(?:$|[?#])/i;
 const shaderSourceFilePattern = /\.(infinightcaptureshader|facevizshader|frag|fs|glsl|json|txt)$/i;
 
@@ -306,6 +479,119 @@ const shaderMotionSourceIds = new Set<string>(shaderMotionSources.map((source) =
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const clampNumber = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+
+const normalizeFaceGestureCalibration = (value: unknown): FaceGestureCalibration => {
+  if (!isRecord(value)) {
+    return defaultFaceGestureCalibration;
+  }
+
+  const next = { ...defaultFaceGestureCalibration };
+  for (const key of Object.keys(defaultFaceGestureCalibration) as Array<keyof FaceGestureCalibration>) {
+    const rawValue = value[key];
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      next[key] = clampNumber(rawValue);
+    }
+  }
+
+  return next;
+};
+
+const normalizeGestureStateMachineConfig = (value: unknown): GestureStateMachineConfig => {
+  if (!isRecord(value)) {
+    return defaultGestureStateMachineConfig;
+  }
+
+  const next = { ...defaultGestureStateMachineConfig };
+  for (const control of gestureMachineControls) {
+    const rawValue = value[control.id];
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      next[control.id] = clampNumber(rawValue, control.min, control.max);
+    }
+  }
+
+  const latchGestures = isRecord(value.latchGestures) ? value.latchGestures : {};
+  next.latchGestures = { ...defaultGestureStateMachineConfig.latchGestures };
+  for (const id of gestureControlIds) {
+    const rawLatch = latchGestures[id];
+    if (typeof rawLatch === "boolean") {
+      next.latchGestures[id] = rawLatch;
+    }
+  }
+
+  return next;
+};
+
+const gestureActionTriggerIds = new Set<GestureActionTrigger>(gestureActionTriggers.map((trigger) => trigger.id));
+const gestureActionTypeIds = new Set<GestureActionType>(gestureActionTypes.map((type) => type.id));
+const gestureActionCurveIds = new Set<GestureActionCurve>(gestureActionCurves.map((curve) => curve.id));
+const gestureControlIdSet = new Set<GestureControlId>(gestureControlIds);
+const outputCompositionModeIds = new Set<OutputCompositionMode>(outputCompositionModes.map((mode) => mode.id));
+
+const normalizeGestureActionRoute = (value: unknown, fallback: GestureActionRoute): GestureActionRoute => {
+  if (!isRecord(value)) return fallback;
+
+  const gestureId = typeof value.gestureId === "string" && gestureControlIdSet.has(value.gestureId as GestureControlId)
+    ? value.gestureId as GestureControlId
+    : fallback.gestureId;
+  const trigger = typeof value.trigger === "string" && gestureActionTriggerIds.has(value.trigger as GestureActionTrigger)
+    ? value.trigger as GestureActionTrigger
+    : fallback.trigger;
+  const actionType = typeof value.actionType === "string" && gestureActionTypeIds.has(value.actionType as GestureActionType)
+    ? value.actionType as GestureActionType
+    : fallback.actionType;
+  const curve = typeof value.curve === "string" && gestureActionCurveIds.has(value.curve as GestureActionCurve)
+    ? value.curve as GestureActionCurve
+    : fallback.curve;
+  const outputMode = typeof value.outputMode === "string" && outputCompositionModeIds.has(value.outputMode as OutputCompositionMode)
+    ? value.outputMode as OutputCompositionMode
+    : fallback.outputMode;
+
+  return {
+    id: typeof value.id === "string" && value.id.trim() ? value.id.trim() : fallback.id,
+    enabled: typeof value.enabled === "boolean" ? value.enabled : fallback.enabled,
+    gestureId,
+    trigger,
+    actionType,
+    shaderParameterId: typeof value.shaderParameterId === "string" ? value.shaderParameterId : fallback.shaderParameterId,
+    effectId: typeof value.effectId === "string" ? value.effectId : fallback.effectId,
+    outputMode,
+    min: typeof value.min === "number" && Number.isFinite(value.min) ? clampNumber(value.min) : fallback.min,
+    max: typeof value.max === "number" && Number.isFinite(value.max) ? clampNumber(value.max) : fallback.max,
+    invert: typeof value.invert === "boolean" ? value.invert : fallback.invert,
+    curve,
+    holdMs: typeof value.holdMs === "number" && Number.isFinite(value.holdMs) ? clampNumber(value.holdMs, 0, 5000) : fallback.holdMs
+  };
+};
+
+const normalizeGestureActionMatrix = (value: unknown): GestureActionRoute[] => {
+  const defaults = createDefaultGestureActionMatrix();
+  const routes = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.routes) ? value.routes : defaults;
+  return routes.map((route, index) =>
+    normalizeGestureActionRoute(
+      route,
+      defaults[index] ?? createGestureActionRoute(`route-${index + 1}`, gestureControlIds[index % gestureControlIds.length], "started", "shaderParameter")
+    )
+  );
+};
+
+const applyGestureActionCurve = (value: number, curve: GestureActionCurve) => {
+  const next = clampNumber(value);
+  if (curve === "easeIn") return next * next;
+  if (curve === "easeOut") return 1 - (1 - next) * (1 - next);
+  if (curve === "snap") return next >= 0.5 ? 1 : 0;
+  return next;
+};
+
+const routeMatchesTrigger = (control: GestureControlState, route: GestureActionRoute) => {
+  if (route.trigger === "started") return control.started;
+  if (route.trigger === "held") return control.held && control.heldMs >= route.holdMs;
+  if (route.trigger === "released") return control.released;
+  if (route.trigger === "repeated") return control.repeated;
+  if (route.trigger === "latched") return control.latched;
+  return false;
+};
 
 const normalizeShaderParameterDefinition = (value: unknown): ShaderParameterDefinition | null => {
   if (!isRecord(value)) return null;
@@ -465,7 +751,7 @@ const getCaptureError = (error: unknown) => {
   if (isCameraBlockedError(error)) {
     return {
       issue: "blocked" as CameraIssue,
-      message: "Camera access is blocked for INFINIGHTCapture."
+      message: "Camera access is blocked for this app."
     };
   }
 
@@ -508,6 +794,7 @@ export function App() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const shaderFileInputRef = useRef<HTMLInputElement | null>(null);
+  const gestureActionFileInputRef = useRef<HTMLInputElement | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -515,6 +802,11 @@ export function App() {
   const streamRef = useRef<MediaStream | null>(null);
   const previousHandsRef = useRef<Map<string, PreviousHandSample>>(new Map());
   const motionRef = useRef<MotionFrame | null>(null);
+  const faceGestureCalibrationRef = useRef<FaceGestureCalibration>(defaultFaceGestureCalibration);
+  const gestureStateMachineRef = useRef<GestureStateMachineMemory>(createGestureStateMachineMemory());
+  const gestureStateMachineConfigRef = useRef<GestureStateMachineConfig>(defaultGestureStateMachineConfig);
+  const gestureActionMatrixRef = useRef<GestureActionRoute[]>(createDefaultGestureActionMatrix());
+  const activeShaderSceneRef = useRef<ShaderScene>(shaderScenes[0]);
   const outputTargetRef = useRef<OutputTarget>(getPreferredOutput());
   const outputStreamingRef = useRef(false);
   const outputFrameInFlightRef = useRef(false);
@@ -560,8 +852,35 @@ export function App() {
     system: false,
     shader: false,
     effects: false,
+    face: false,
     tracking: false
   });
+  const [faceGestureCalibration, setFaceGestureCalibration] = useState<FaceGestureCalibration>(() => {
+    try {
+      return normalizeFaceGestureCalibration(window.localStorage.getItem(FACE_GESTURE_CALIBRATION_STORAGE_KEY)
+        ? JSON.parse(window.localStorage.getItem(FACE_GESTURE_CALIBRATION_STORAGE_KEY) ?? "{}")
+        : defaultFaceGestureCalibration);
+    } catch {
+      return defaultFaceGestureCalibration;
+    }
+  });
+  const [gestureStateMachineConfig, setGestureStateMachineConfig] = useState<GestureStateMachineConfig>(() => {
+    try {
+      const stored = window.localStorage.getItem(GESTURE_STATE_MACHINE_STORAGE_KEY);
+      return normalizeGestureStateMachineConfig(stored ? JSON.parse(stored) : defaultGestureStateMachineConfig);
+    } catch {
+      return defaultGestureStateMachineConfig;
+    }
+  });
+  const [gestureActionMatrix, setGestureActionMatrix] = useState<GestureActionRoute[]>(() => {
+    try {
+      const stored = window.localStorage.getItem(GESTURE_ACTION_MATRIX_STORAGE_KEY);
+      return normalizeGestureActionMatrix(stored ? JSON.parse(stored) : createDefaultGestureActionMatrix());
+    } catch {
+      return createDefaultGestureActionMatrix();
+    }
+  });
+  const [gestureActionNotice, setGestureActionNotice] = useState("");
   const [importedShaderScenes, setImportedShaderScenes] = useState<ShaderScene[]>(() => {
     try {
       const stored = window.localStorage.getItem(SHADER_LIBRARY_STORAGE_KEY);
@@ -628,6 +947,7 @@ export function App() {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    gestureStateMachineRef.current = createGestureStateMachineMemory();
     setCameraIssue(null);
     setCaptureState("idle");
   }, []);
@@ -698,6 +1018,67 @@ export function App() {
     setSystemStatus(await getSystemStatus());
   }, []);
 
+  const executeGestureActionRoutes = useCallback((controls: MotionFrame["gestureControls"]) => {
+    const routes = gestureActionMatrixRef.current;
+    const scene = activeShaderSceneRef.current;
+
+    for (const route of routes) {
+      if (!route.enabled) continue;
+      const control = controls[route.gestureId];
+      if (!control || !routeMatchesTrigger(control, route)) continue;
+
+      if (route.actionType === "shaderParameter") {
+        const parameter = scene.parameters.find((candidate) => candidate.id === route.shaderParameterId) ?? scene.parameters[0];
+        if (!parameter) continue;
+        const baseSignal =
+          route.trigger === "started" || route.trigger === "released" || route.trigger === "repeated"
+            ? 1
+            : route.trigger === "latched"
+              ? control.latched ? 1 : 0
+              : control.smooth;
+        const shaped = applyGestureActionCurve(route.invert ? 1 - baseSignal : baseSignal, route.curve);
+        const normalizedValue = route.min + shaped * (route.max - route.min);
+        const mappedValue = parameter.min + normalizedValue * (parameter.max - parameter.min);
+
+        setShaderSettings((current) => {
+          const currentSetting = current[parameter.id] ?? {
+            value: parameter.defaultValue,
+            source: parameter.motionDefault,
+            depth: 0
+          };
+          if (
+            currentSetting.source === "manual" &&
+            currentSetting.depth === 0 &&
+            Math.abs(currentSetting.value - mappedValue) < 0.005
+          ) {
+            return current;
+          }
+
+          return {
+            ...current,
+            [parameter.id]: {
+              ...currentSetting,
+              value: mappedValue,
+              source: "manual",
+              depth: 0
+            }
+          };
+        });
+        continue;
+      }
+
+      if (route.actionType === "effect") {
+        setSelectedEffect(route.effectId);
+        setVisualMode("camera");
+        continue;
+      }
+
+      if (route.actionType === "outputMode") {
+        setOutputCompositionMode(route.outputMode);
+      }
+    }
+  }, []);
+
   const renderLoop = useCallback(() => {
     const canvas = canvasRef.current;
     const outputCanvas = outputCanvasRef.current;
@@ -733,8 +1114,19 @@ export function App() {
         previousHandsRef.current = nextPrevious;
         const pose = buildTrackedPose((poseResults.landmarks?.[0] as Landmark[] | undefined) ?? undefined);
         const face = buildTrackedFace((faceResults.faceLandmarks?.[0] as Landmark[] | undefined) ?? undefined);
-        const nextMotion = analyzeMotion(hands, pose, face, now);
+        const rawMotion = analyzeMotion(hands, pose, face, now, faceGestureCalibrationRef.current);
+        const gestureControls = updateGestureStateMachine(
+          gestureStateMachineRef.current,
+          rawMotion.gestures,
+          now,
+          gestureStateMachineConfigRef.current
+        );
+        const nextMotion = {
+          ...rawMotion,
+          gestureControls
+        };
         motionRef.current = nextMotion;
+        executeGestureActionRoutes(gestureControls);
         setMotion(nextMotion);
         setLatency(performance.now() - frameStartRef.current);
       } catch (nextError) {
@@ -757,7 +1149,7 @@ export function App() {
     }
 
     rafRef.current = requestAnimationFrame(renderLoop);
-  }, []);
+  }, [executeGestureActionRoutes]);
 
   const startCapture = useCallback(async () => {
     if (captureState === "loading" || captureState === "running") return;
@@ -777,7 +1169,7 @@ export function App() {
 
       const systemCameraAccess = await requestSystemCameraAccess();
       if (!systemCameraAccess.granted) {
-        const error = new DOMException("Camera access is blocked for INFINIGHTCapture.", "NotAllowedError");
+        const error = new DOMException("Camera access is blocked for this app.", "NotAllowedError");
         throw error;
       }
       setSystemStatus((current) => (current ? { ...current, cameraAccess: systemCameraAccess.status } : current));
@@ -840,6 +1232,7 @@ export function App() {
       runningRef.current = true;
       lastVideoTimeRef.current = -1;
       previousHandsRef.current.clear();
+      gestureStateMachineRef.current = createGestureStateMachineMemory();
       setCaptureState("running");
     } catch (nextError) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -876,6 +1269,25 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(SHADER_LIBRARY_STORAGE_KEY, JSON.stringify(importedShaderScenes));
   }, [importedShaderScenes]);
+
+  useEffect(() => {
+    faceGestureCalibrationRef.current = faceGestureCalibration;
+    window.localStorage.setItem(FACE_GESTURE_CALIBRATION_STORAGE_KEY, JSON.stringify(faceGestureCalibration));
+  }, [faceGestureCalibration]);
+
+  useEffect(() => {
+    gestureStateMachineConfigRef.current = gestureStateMachineConfig;
+    window.localStorage.setItem(GESTURE_STATE_MACHINE_STORAGE_KEY, JSON.stringify(gestureStateMachineConfig));
+  }, [gestureStateMachineConfig]);
+
+  useEffect(() => {
+    gestureActionMatrixRef.current = gestureActionMatrix;
+    window.localStorage.setItem(GESTURE_ACTION_MATRIX_STORAGE_KEY, JSON.stringify(gestureActionMatrix));
+  }, [gestureActionMatrix]);
+
+  useEffect(() => {
+    activeShaderSceneRef.current = activeShaderScene;
+  }, [activeShaderScene]);
 
   useEffect(() => {
     outputTargetRef.current = outputTarget;
@@ -936,6 +1348,59 @@ export function App() {
       }
     }));
   }, []);
+
+  const updateFaceGestureCalibration = useCallback((patch: Partial<FaceGestureCalibration>) => {
+    setFaceGestureCalibration((current) => normalizeFaceGestureCalibration({ ...current, ...patch }));
+  }, []);
+
+  const updateGestureStateMachineConfig = useCallback((patch: Partial<GestureStateMachineConfig>) => {
+    setGestureStateMachineConfig((current) => normalizeGestureStateMachineConfig({ ...current, ...patch }));
+  }, []);
+
+  const resetGestureStateMachineConfig = useCallback(() => {
+    setGestureStateMachineConfig(defaultGestureStateMachineConfig);
+    gestureStateMachineRef.current = createGestureStateMachineMemory();
+  }, []);
+
+  const toggleGestureLatch = useCallback((gestureId: GestureControlId) => {
+    setGestureStateMachineConfig((current) =>
+      normalizeGestureStateMachineConfig({
+        ...current,
+        latchGestures: {
+          ...current.latchGestures,
+          [gestureId]: !current.latchGestures[gestureId]
+        }
+      })
+    );
+  }, []);
+
+  const resetFaceGestureCalibration = useCallback(() => {
+    setFaceGestureCalibration(defaultFaceGestureCalibration);
+  }, []);
+
+  const captureNeutralFaceCalibration = useCallback(() => {
+    const face = motionRef.current?.face;
+    if (!face) return;
+
+    updateFaceGestureCalibration(
+      Object.fromEntries(
+        faceSignalControls.map((control) => [
+          control.id,
+          clampNumber((face[control.signal] ?? 0) + control.neutralMargin, control.min, control.max)
+        ])
+      ) as Partial<FaceGestureCalibration>
+    );
+  }, [updateFaceGestureCalibration]);
+
+  const captureLiveFaceThreshold = useCallback((control: (typeof faceSignalControls)[number]) => {
+    const face = motionRef.current?.face;
+    if (!face) return;
+
+    const value = face[control.signal] ?? 0;
+    updateFaceGestureCalibration({
+      [control.id]: clampNumber(value * 0.72, control.min, control.max)
+    } as Partial<FaceGestureCalibration>);
+  }, [updateFaceGestureCalibration]);
 
   const addImportedShaderScene = useCallback((input: {
     author?: string;
@@ -1100,6 +1565,65 @@ export function App() {
     }
   }, [shaderSceneId]);
 
+  const updateGestureActionRoute = useCallback((routeId: string, patch: Partial<GestureActionRoute>) => {
+    setGestureActionMatrix((current) =>
+      current.map((route) => route.id === routeId ? normalizeGestureActionRoute({ ...route, ...patch }, route) : route)
+    );
+  }, []);
+
+  const addGestureActionRoute = useCallback(() => {
+    setGestureActionMatrix((current) => [
+      ...current,
+      {
+        ...createGestureActionRoute(`route-${Date.now().toString(36)}`, "smile", "started", "shaderParameter"),
+        shaderParameterId: activeShaderSceneRef.current.parameters[0]?.id ?? ""
+      }
+    ]);
+    setGestureActionNotice("Route added.");
+  }, []);
+
+  const deleteGestureActionRoute = useCallback((routeId: string) => {
+    setGestureActionMatrix((current) => current.filter((route) => route.id !== routeId));
+    setGestureActionNotice("Route deleted.");
+  }, []);
+
+  const resetGestureActionMatrix = useCallback(() => {
+    setGestureActionMatrix(createDefaultGestureActionMatrix());
+    setGestureActionNotice("Matrix reset.");
+  }, []);
+
+  const exportGestureActionMatrix = useCallback(() => {
+    const preset: GestureActionMatrixPreset = {
+      schema: GESTURE_ACTION_MATRIX_PRESET_SCHEMA,
+      name: `${activeShaderScene.label} Gesture Matrix`,
+      routes: gestureActionMatrix
+    };
+    const filename = `${preset.name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "gesture-action-matrix"}.facevizgesturematrix`;
+    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    setGestureActionNotice("Matrix exported.");
+  }, [activeShaderScene.label, gestureActionMatrix]);
+
+  const importGestureActionMatrix = useCallback(async (file: File) => {
+    try {
+      const source = await file.text();
+      const parsed = JSON.parse(source);
+      setGestureActionMatrix(normalizeGestureActionMatrix(parsed));
+      setGestureActionNotice("Matrix imported.");
+    } catch {
+      setGestureActionNotice("Unable to import matrix.");
+    }
+  }, []);
+
   const selectWorkspace = useCallback((tab: WorkspaceTab) => {
     setActiveWorkspace(tab);
     if (tab === "preview") {
@@ -1131,8 +1655,8 @@ export function App() {
   const activeGestures = motion
     ? Object.entries(motion.gestures)
         .filter(([, active]) => active)
-        .map(([name]) => name)
-    : ["idle"];
+        .map(([name]) => gestureLabels[name as keyof MotionFrame["gestures"]] ?? name)
+    : ["Idle"];
 
   return (
     <main className="app-shell">
@@ -1147,14 +1671,12 @@ export function App() {
 
       <section className="workspace">
         <header className="topbar">
-          <div className="brand-lockup">
-            <div className="brand-mark">
-              <ScanFace size={22} />
-            </div>
-            <div>
-              <p className="eyebrow brand-name">INFINIGHTCapture</p>
-              <h1>Gesture Mocap Sender</h1>
-            </div>
+          <div className="brand-lockup" aria-label="INFINIGHTCapture">
+            <img
+              className="brand-logo"
+              src="/brand/infinightcapture_horizontal_logo.png"
+              alt="INFINIGHTCapture"
+            />
           </div>
 
           <div className="topbar-actions">
@@ -1243,8 +1765,8 @@ export function App() {
                 {cameraIssue === "blocked" && (
                   <ol>
                     <li>Reset camera permission for 127.0.0.1:5173 in the browser controls.</li>
-                    <li>Reload INFINIGHTCapture, then press Start again.</li>
-                    <li>For the desktop shell, allow camera access for Electron or INFINIGHTCapture in macOS settings.</li>
+                    <li>Reload the app, then press Start again.</li>
+                    <li>For the desktop shell, allow camera access for Electron or this app in macOS settings.</li>
                   </ol>
                 )}
               </div>
@@ -1281,6 +1803,19 @@ export function App() {
                       </div>
                     ))}
                 </div>
+                <GestureActionMatrixEditor
+                  activeScene={activeShaderScene}
+                  fileInputRef={gestureActionFileInputRef}
+                  matrix={gestureActionMatrix}
+                  motion={motion}
+                  notice={gestureActionNotice}
+                  onAdd={addGestureActionRoute}
+                  onDelete={deleteGestureActionRoute}
+                  onExport={exportGestureActionMatrix}
+                  onImport={importGestureActionMatrix}
+                  onReset={resetGestureActionMatrix}
+                  onUpdate={updateGestureActionRoute}
+                />
               </section>
             )}
 
@@ -1593,6 +2128,23 @@ export function App() {
         </CollapsibleRailSection>
 
         <CollapsibleRailSection
+          collapsed={collapsedRailSections.face}
+          icon={Smile}
+          id="face"
+          onToggle={() => toggleRailSection("face")}
+          title="Face Control"
+        >
+          <FaceCalibrationPanel
+            calibration={faceGestureCalibration}
+            motion={motion}
+            onCaptureLive={captureLiveFaceThreshold}
+            onCaptureNeutral={captureNeutralFaceCalibration}
+            onReset={resetFaceGestureCalibration}
+            onUpdate={updateFaceGestureCalibration}
+          />
+        </CollapsibleRailSection>
+
+        <CollapsibleRailSection
           collapsed={collapsedRailSections.tracking}
           icon={ScanFace}
           id="tracking"
@@ -1610,6 +2162,13 @@ export function App() {
               </span>
             ))}
           </div>
+          <GestureStateMachinePanel
+            config={gestureStateMachineConfig}
+            controls={motion?.gestureControls}
+            onReset={resetGestureStateMachineConfig}
+            onToggleLatch={toggleGestureLatch}
+            onUpdate={updateGestureStateMachineConfig}
+          />
         </CollapsibleRailSection>
       </aside>
     </main>
@@ -1627,6 +2186,194 @@ type SignalGraphProps = {
   selectedSystemOutput: SystemStatus["outputs"][number] | undefined;
   systemStatus: SystemStatus | null;
 };
+
+type FaceCalibrationPanelProps = {
+  calibration: FaceGestureCalibration;
+  motion: MotionFrame | null;
+  onCaptureLive: (control: (typeof faceSignalControls)[number]) => void;
+  onCaptureNeutral: () => void;
+  onReset: () => void;
+  onUpdate: (patch: Partial<FaceGestureCalibration>) => void;
+};
+
+type GestureStateMachinePanelProps = {
+  config: GestureStateMachineConfig;
+  controls: MotionFrame["gestureControls"] | undefined;
+  onReset: () => void;
+  onToggleLatch: (gestureId: GestureControlId) => void;
+  onUpdate: (patch: Partial<GestureStateMachineConfig>) => void;
+};
+
+const getGestureControlPriority = (control: GestureControlState) => {
+  if (control.started) return 0;
+  if (control.repeated) return 1;
+  if (control.released) return 2;
+  if (control.held) return 3;
+  if (control.latched) return 4;
+  if (control.active) return 5;
+  return 6;
+};
+
+const formatGestureMs = (value: number) => `${Math.round(value)} ms`;
+
+function GestureStateMachinePanel({
+  config,
+  controls,
+  onReset,
+  onToggleLatch,
+  onUpdate
+}: GestureStateMachinePanelProps) {
+  const activeControls = controls
+    ? gestureControlIds
+        .map((id) => controls[id])
+        .filter((control) => control && (control.phase !== "idle" || control.latched))
+        .sort((a, b) => getGestureControlPriority(a) - getGestureControlPriority(b))
+        .slice(0, 6)
+    : [];
+
+  return (
+    <div className="gesture-machine-panel">
+      <div className="gesture-machine-header">
+        <span>Event Machine</span>
+        <button onClick={onReset} type="button">Reset</button>
+      </div>
+
+      <div className="gesture-machine-controls">
+        {gestureMachineControls.map((control) => (
+          <label className="gesture-machine-control" key={control.id}>
+            <span>{control.label}</span>
+            <input
+              type="range"
+              min={control.min}
+              max={control.max}
+              step={control.step}
+              value={config[control.id]}
+              onChange={(event) => onUpdate({ [control.id]: Number(event.target.value) } as Partial<GestureStateMachineConfig>)}
+            />
+            <strong>{control.suffix ? `${Math.round(config[control.id])} ${control.suffix}` : config[control.id].toFixed(2)}</strong>
+          </label>
+        ))}
+      </div>
+
+      <div className="gesture-latch-grid" aria-label="Latch gesture toggles">
+        {gestureControlIds.map((id) => (
+          <button
+            className={config.latchGestures[id] ? "active" : ""}
+            key={id}
+            onClick={() => onToggleLatch(id)}
+            type="button"
+          >
+            {gestureLabels[id]}
+          </button>
+        ))}
+      </div>
+
+      <div className="gesture-event-stack" aria-label="Gesture event state">
+        {activeControls.length > 0 ? (
+          activeControls.map((control) => (
+            <div className={`gesture-event-row ${control.phase}`} key={control.id}>
+              <span>{gestureLabels[control.id]}</span>
+              <strong>
+                {control.started
+                  ? "started"
+                  : control.repeated
+                    ? "repeat"
+                    : control.released
+                      ? "released"
+                      : control.latched
+                        ? "latched"
+                        : control.held
+                          ? "held"
+                          : control.phase}
+              </strong>
+              <small>{control.active ? formatGestureMs(control.activeMs) : `${Math.round(control.smooth * 100)}%`}</small>
+            </div>
+          ))
+        ) : (
+          <div className="gesture-event-empty">No gesture events</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function FaceCalibrationPanel({
+  calibration,
+  motion,
+  onCaptureLive,
+  onCaptureNeutral,
+  onReset,
+  onUpdate
+}: FaceCalibrationPanelProps) {
+  const face = motion?.face;
+  const hasFace = Boolean(face);
+
+  return (
+    <div className="face-calibration-panel">
+      <div className="face-calibration-actions">
+        <button onClick={onCaptureNeutral} type="button" disabled={!hasFace}>
+          Guard Neutral
+        </button>
+        <button onClick={onReset} type="button">
+          Reset
+        </button>
+      </div>
+
+      <div className="face-signal-stack" aria-label="Face gesture thresholds">
+        {faceSignalControls.map((control) => {
+          const value = face?.[control.signal] ?? 0;
+          const threshold = calibration[control.id];
+          const active = value >= threshold && hasFace;
+
+          return (
+            <div className={active ? "face-signal-control active" : "face-signal-control"} key={control.id}>
+              <div className="face-signal-header">
+                <span>{control.label}</span>
+                <strong>{value.toFixed(2)}</strong>
+              </div>
+              <div className="face-meter" aria-hidden="true">
+                <i style={{ width: `${Math.round(value * 100)}%` }} />
+                <b style={{ left: `${Math.round(threshold * 100)}%` }} />
+              </div>
+              <label>
+                <span>Threshold</span>
+                <input
+                  type="range"
+                  min={control.min}
+                  max={control.max}
+                  step="0.01"
+                  value={threshold}
+                  onChange={(event) => onUpdate({ [control.id]: Number(event.target.value) } as Partial<FaceGestureCalibration>)}
+                />
+                <strong>{threshold.toFixed(2)}</strong>
+              </label>
+              <button onClick={() => onCaptureLive(control)} type="button" disabled={!hasFace}>
+                Use Live
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="face-touch-stack" aria-label="Face touch gesture tuning">
+        {faceTouchControls.map((control) => (
+          <label className="face-touch-control" key={control.id}>
+            <span>{control.label}</span>
+            <input
+              type="range"
+              min={control.min}
+              max={control.max}
+              step={control.step}
+              value={calibration[control.id]}
+              onChange={(event) => onUpdate({ [control.id]: Number(event.target.value) } as Partial<FaceGestureCalibration>)}
+            />
+            <strong>{calibration[control.id].toFixed(2)}</strong>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function SignalGraph({
   captureState,
@@ -1665,6 +2412,7 @@ function SignalGraph({
   const signalTokens = [
     `${Math.round((motion?.confidence ?? 0) * 100)}% confidence`,
     `${motion?.hands.length ?? 0}/2 hands`,
+    motion?.face ? "face active" : "no face",
     `${motion?.landmarkCount ?? 0} landmarks`,
     `${Math.round(latency)} ms`
   ];
@@ -1857,7 +2605,7 @@ function SignalGraph({
           onPointerUp={stopNodeDrag}
           position={nodePositions.tracker}
           status={motion ? "tracking" : "standby"}
-          value={motion ? "Pose + Hands" : "No frame"}
+          value={motion ? "Pose + Hands + Face" : "No frame"}
         />
         <SignalNode
           className="node-core"
@@ -1935,6 +2683,223 @@ type ShaderParameterMapperProps = {
   settings: Record<string, ShaderParameterSettings>;
   shaderValues: number[];
 };
+
+type GestureActionMatrixEditorProps = {
+  activeScene: ShaderScene;
+  fileInputRef: { current: HTMLInputElement | null };
+  matrix: GestureActionRoute[];
+  motion: MotionFrame | null;
+  notice: string;
+  onAdd: () => void;
+  onDelete: (routeId: string) => void;
+  onExport: () => void;
+  onImport: (file: File) => void;
+  onReset: () => void;
+  onUpdate: (routeId: string, patch: Partial<GestureActionRoute>) => void;
+};
+
+function GestureActionMatrixEditor({
+  activeScene,
+  fileInputRef,
+  matrix,
+  motion,
+  notice,
+  onAdd,
+  onDelete,
+  onExport,
+  onImport,
+  onReset,
+  onUpdate
+}: GestureActionMatrixEditorProps) {
+  return (
+    <div className="gesture-action-matrix" aria-label="Gesture action matrix">
+      <div className="gesture-action-toolbar">
+        <div>
+          <p className="eyebrow">Action Matrix</p>
+          <h3>Gesture Routes</h3>
+        </div>
+        <div className="gesture-action-buttons">
+          <button onClick={onAdd} type="button">Add</button>
+          <button onClick={onReset} type="button">Reset</button>
+          <button onClick={onExport} type="button">Export</button>
+          <button onClick={() => fileInputRef.current?.click()} type="button">Import</button>
+          <input
+            ref={fileInputRef}
+            accept=".facevizgesturematrix,.json,application/json"
+            className="gesture-action-file-input"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onImport(file);
+              event.target.value = "";
+            }}
+            type="file"
+          />
+        </div>
+      </div>
+      {notice && <div className="gesture-action-notice">{notice}</div>}
+      <div className="gesture-action-route-grid">
+        {matrix.map((route) => {
+          const control = motion?.gestureControls[route.gestureId];
+          const active = control ? routeMatchesTrigger(control, route) : false;
+          const externalReserved = route.actionType === "keyboard" || route.actionType === "midi" || route.actionType === "osc";
+
+          return (
+            <article className={active ? "gesture-action-route active" : "gesture-action-route"} key={route.id}>
+              <div className="gesture-action-route-header">
+                <label className="gesture-action-enabled">
+                  <input
+                    checked={route.enabled}
+                    onChange={(event) => onUpdate(route.id, { enabled: event.target.checked })}
+                    type="checkbox"
+                  />
+                  <span>{gestureLabels[route.gestureId]}</span>
+                </label>
+                <strong>{active ? "firing" : route.trigger}</strong>
+                <button onClick={() => onDelete(route.id)} type="button" aria-label={`Delete ${gestureLabels[route.gestureId]} route`}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+
+              <div className="gesture-action-route-fields">
+                <label>
+                  <span>Gesture</span>
+                  <select
+                    value={route.gestureId}
+                    onChange={(event) => onUpdate(route.id, { gestureId: event.target.value as GestureControlId })}
+                  >
+                    {gestureControlIds.map((id) => (
+                      <option key={id} value={id}>{gestureLabels[id]}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Event</span>
+                  <select
+                    value={route.trigger}
+                    onChange={(event) => onUpdate(route.id, { trigger: event.target.value as GestureActionTrigger })}
+                  >
+                    {gestureActionTriggers.map((trigger) => (
+                      <option key={trigger.id} value={trigger.id}>{trigger.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span>Action</span>
+                  <select
+                    value={route.actionType}
+                    onChange={(event) => onUpdate(route.id, { actionType: event.target.value as GestureActionType })}
+                  >
+                    {gestureActionTypes.map((type) => (
+                      <option key={type.id} value={type.id}>{type.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {route.actionType === "shaderParameter" && (
+                  <label>
+                    <span>Target</span>
+                    <select
+                      value={activeScene.parameters.some((parameter) => parameter.id === route.shaderParameterId) ? route.shaderParameterId : ""}
+                      onChange={(event) => onUpdate(route.id, { shaderParameterId: event.target.value })}
+                    >
+                      <option value="">First parameter</option>
+                      {activeScene.parameters.map((parameter) => (
+                        <option key={parameter.id} value={parameter.id}>{parameter.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {route.actionType === "effect" && (
+                  <label>
+                    <span>Target</span>
+                    <select value={route.effectId} onChange={(event) => onUpdate(route.id, { effectId: event.target.value })}>
+                      {effects.map((effect) => (
+                        <option key={effect.id} value={effect.id}>{effect.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {route.actionType === "outputMode" && (
+                  <label>
+                    <span>Target</span>
+                    <select
+                      value={route.outputMode}
+                      onChange={(event) => onUpdate(route.id, { outputMode: event.target.value as OutputCompositionMode })}
+                    >
+                      {outputCompositionModes.map((mode) => (
+                        <option key={mode.id} value={mode.id}>{mode.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {externalReserved && (
+                  <div className="gesture-action-reserved">
+                    <span>Reserved</span>
+                    <strong>Bridge pending</strong>
+                  </div>
+                )}
+              </div>
+
+              <div className="gesture-action-shape">
+                <label>
+                  <span>Min</span>
+                  <input
+                    max="1"
+                    min="0"
+                    onChange={(event) => onUpdate(route.id, { min: Number(event.target.value) })}
+                    step="0.01"
+                    type="range"
+                    value={route.min}
+                  />
+                  <strong>{route.min.toFixed(2)}</strong>
+                </label>
+                <label>
+                  <span>Max</span>
+                  <input
+                    max="1"
+                    min="0"
+                    onChange={(event) => onUpdate(route.id, { max: Number(event.target.value) })}
+                    step="0.01"
+                    type="range"
+                    value={route.max}
+                  />
+                  <strong>{route.max.toFixed(2)}</strong>
+                </label>
+                <label>
+                  <span>Hold</span>
+                  <input
+                    max="5000"
+                    min="0"
+                    onChange={(event) => onUpdate(route.id, { holdMs: Number(event.target.value) })}
+                    step="50"
+                    type="range"
+                    value={route.holdMs}
+                  />
+                  <strong>{Math.round(route.holdMs)} ms</strong>
+                </label>
+                <label>
+                  <span>Curve</span>
+                  <select value={route.curve} onChange={(event) => onUpdate(route.id, { curve: event.target.value as GestureActionCurve })}>
+                    {gestureActionCurves.map((curve) => (
+                      <option key={curve.id} value={curve.id}>{curve.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="gesture-action-invert">
+                  <span>Invert</span>
+                  <input
+                    checked={route.invert}
+                    onChange={(event) => onUpdate(route.id, { invert: event.target.checked })}
+                    type="checkbox"
+                  />
+                </label>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function ShaderParameterMapper({
   compact = false,
@@ -2020,10 +2985,16 @@ const isSignalActive = (source: ShaderParameterSettings["source"], value: number
       return value > 0.34;
     case "handOpen":
     case "openPalm":
+    case "mouthOpen":
+    case "smile":
+    case "frown":
     case "confidence":
       return value > 0.5;
     case "handsUp":
     case "faceCover":
+    case "eyesClosed":
+    case "earPull":
+    case "chinPull":
       return value > 0.5;
     case "noseX":
     case "noseY":

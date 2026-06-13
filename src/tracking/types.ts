@@ -18,6 +18,7 @@ export type TrackedHand = {
   openness: number;
   pinch: number;
   velocity: number;
+  velocityVector: Vec2;
 };
 
 export type TrackedPose = {
@@ -43,6 +44,8 @@ export type TrackedFace = {
   chin?: Vec2;
   leftCheek?: Vec2;
   rightCheek?: Vec2;
+  leftEar?: Vec2;
+  rightEar?: Vec2;
   leftEye?: Vec2;
   rightEye?: Vec2;
   mouthLeft?: Vec2;
@@ -51,6 +54,10 @@ export type TrackedFace = {
   lowerLip?: Vec2;
   mouthOpenness: number;
   smile: number;
+  frown: number;
+  leftEyeClosure: number;
+  rightEyeClosure: number;
+  eyeClosure: number;
 };
 
 export type GestureState = {
@@ -59,7 +66,56 @@ export type GestureState = {
   pinch: boolean;
   openPalm: boolean;
   fastMotion: boolean;
+  mouthOpen: boolean;
+  smile: boolean;
+  frown: boolean;
+  eyesClosed: boolean;
+  earPull: boolean;
+  chinPull: boolean;
   neutral: boolean;
+};
+
+export type GestureControlId = Exclude<keyof GestureState, "neutral">;
+
+export type GesturePhase = "idle" | "debouncing" | "started" | "held" | "released" | "cooldown";
+
+export type GestureControlState = {
+  id: GestureControlId;
+  active: boolean;
+  phase: GesturePhase;
+  started: boolean;
+  held: boolean;
+  released: boolean;
+  repeated: boolean;
+  latched: boolean;
+  repeats: number;
+  activeMs: number;
+  heldMs: number;
+  cooldownMsRemaining: number;
+  smooth: number;
+};
+
+export type GestureControlFrame = Record<GestureControlId, GestureControlState>;
+
+export type GestureStateMachineConfig = {
+  debounceMs: number;
+  releaseDebounceMs: number;
+  holdMs: number;
+  cooldownMs: number;
+  repeatMs: number;
+  smoothing: number;
+  latchGestures: Partial<Record<GestureControlId, boolean>>;
+};
+
+export type FaceGestureCalibration = {
+  mouthOpenThreshold: number;
+  smileThreshold: number;
+  frownThreshold: number;
+  eyesClosedThreshold: number;
+  earPullRadius: number;
+  earPullPinchThreshold: number;
+  chinPullRadius: number;
+  chinPullLiftThreshold: number;
 };
 
 export type MotionFrame = {
@@ -68,6 +124,7 @@ export type MotionFrame = {
   pose?: TrackedPose;
   face?: TrackedFace;
   gestures: GestureState;
+  gestureControls: GestureControlFrame;
   confidence: number;
   landmarkCount: number;
   dominantIntent: string;

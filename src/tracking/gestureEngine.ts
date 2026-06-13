@@ -1,4 +1,5 @@
 import type {
+  FaceGestureCalibration,
   GestureState,
   Handedness,
   Landmark,
@@ -9,6 +10,7 @@ import type {
   TrackedPose,
   Vec2
 } from "./types";
+import { createGestureControlFrame } from "./gestureStateMachine";
 
 const HAND_TIP_INDICES = [4, 8, 12, 16, 20];
 const HAND_ROOT_INDICES = [2, 5, 9, 13, 17];
@@ -24,6 +26,12 @@ const FACE_LEFT_CHEEK = 234;
 const FACE_RIGHT_CHEEK = 454;
 const FACE_LEFT_EYE = 33;
 const FACE_RIGHT_EYE = 263;
+const FACE_LEFT_EYE_INNER = 133;
+const FACE_RIGHT_EYE_INNER = 362;
+const FACE_LEFT_EYE_UPPER = 159;
+const FACE_LEFT_EYE_LOWER = 145;
+const FACE_RIGHT_EYE_UPPER = 386;
+const FACE_RIGHT_EYE_LOWER = 374;
 const FACE_MOUTH_LEFT = 61;
 const FACE_MOUTH_RIGHT = 291;
 const FACE_UPPER_LIP = 13;
@@ -43,6 +51,42 @@ const averagePoint = (points: Vec2[]): Vec2 => {
 };
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+
+export const defaultFaceGestureCalibration: FaceGestureCalibration = {
+  mouthOpenThreshold: 0.48,
+  smileThreshold: 0.52,
+  frownThreshold: 0.46,
+  eyesClosedThreshold: 0.64,
+  earPullRadius: 0.28,
+  earPullPinchThreshold: 0.42,
+  chinPullRadius: 0.24,
+  chinPullLiftThreshold: 0.16
+};
+
+export const resolveFaceGestureCalibration = (
+  calibration?: Partial<FaceGestureCalibration>
+): FaceGestureCalibration => ({
+  ...defaultFaceGestureCalibration,
+  ...calibration
+});
+
+const midpoint = (a: Vec2, b: Vec2): Vec2 => ({
+  x: (a.x + b.x) / 2,
+  y: (a.y + b.y) / 2
+});
+
+const getEyeClosure = (outer: Vec2 | undefined, inner: Vec2 | undefined, upper: Vec2 | undefined, lower: Vec2 | undefined) => {
+  if (!outer || !inner || !upper || !lower) {
+    return 0;
+  }
+
+  const eyeWidth = distance(outer, inner);
+  const eyeOpenRatio = distance(upper, lower) / Math.max(0.01, eyeWidth);
+  return clamp01((0.22 - eyeOpenRatio) * 5.5);
+};
+
+const handLandmarksNearPoint = (hand: TrackedHand, point: Vec2, radius: number) =>
+  hand.landmarks.filter((landmark) => distance(landmark, point) < radius).length;
 
 export const pointToCanvas = (point: Vec2, width: number, height: number): Vec2 => ({
   x: (1 - point.x) * width,
@@ -89,6 +133,26 @@ export const buildTrackedFace = (landmarks?: Landmark[]): TrackedFace | undefine
   const lowerLip = landmarks[FACE_LOWER_LIP];
   const mouthWidth = mouthLeft && mouthRight ? distance(mouthLeft, mouthRight) : 0.08;
   const mouthOpen = upperLip && lowerLip ? distance(upperLip, lowerLip) : 0;
+  const faceWidth = bounds.maxX - bounds.minX;
+  const faceHeight = bounds.maxY - bounds.minY;
+  const mouthCenter = upperLip && lowerLip ? midpoint(upperLip, lowerLip) : undefined;
+  const mouthCornerY = mouthLeft && mouthRight ? (mouthLeft.y + mouthRight.y) / 2 : undefined;
+  const mouthDroop = mouthCenter && mouthCornerY !== undefined ? (mouthCornerY - mouthCenter.y) / Math.max(0.01, mouthWidth) : 0;
+  const leftEyeClosure = getEyeClosure(
+    landmarks[FACE_LEFT_EYE],
+    landmarks[FACE_LEFT_EYE_INNER],
+    landmarks[FACE_LEFT_EYE_UPPER],
+    landmarks[FACE_LEFT_EYE_LOWER]
+  );
+  const rightEyeClosure = getEyeClosure(
+    landmarks[FACE_RIGHT_EYE],
+    landmarks[FACE_RIGHT_EYE_INNER],
+    landmarks[FACE_RIGHT_EYE_UPPER],
+    landmarks[FACE_RIGHT_EYE_LOWER]
+  );
+  const earY = landmarks[FACE_LEFT_EYE] && mouthLeft
+    ? midpoint(landmarks[FACE_LEFT_EYE], mouthLeft).y
+    : bounds.minY + faceHeight * 0.48;
 
   return {
     landmarks,
@@ -99,6 +163,8 @@ export const buildTrackedFace = (landmarks?: Landmark[]): TrackedFace | undefine
     chin: landmarks[FACE_CHIN],
     leftCheek: landmarks[FACE_LEFT_CHEEK],
     rightCheek: landmarks[FACE_RIGHT_CHEEK],
+    leftEar: { x: bounds.minX - faceWidth * 0.04, y: earY },
+    rightEar: { x: bounds.maxX + faceWidth * 0.04, y: earY },
     leftEye: landmarks[FACE_LEFT_EYE],
     rightEye: landmarks[FACE_RIGHT_EYE],
     mouthLeft,
@@ -106,7 +172,11 @@ export const buildTrackedFace = (landmarks?: Landmark[]): TrackedFace | undefine
     upperLip,
     lowerLip,
     mouthOpenness: clamp01((mouthOpen / Math.max(0.01, mouthWidth) - 0.1) * 4.5),
-    smile: clamp01((mouthWidth - (bounds.maxX - bounds.minX) * 0.28) * 8)
+    smile: clamp01((mouthWidth - faceWidth * 0.28) * 8),
+    frown: clamp01((mouthDroop - 0.02) * 8),
+    leftEyeClosure,
+    rightEyeClosure,
+    eyeClosure: Math.max(leftEyeClosure, rightEyeClosure)
   };
 };
 
@@ -129,6 +199,12 @@ export const buildTrackedHand = (
   const pinch = clamp01(1 - pinchDistance / 0.09);
   const deltaSeconds = previous ? Math.max(0.001, (timestamp - previous.timestamp) / 1000) : 1;
   const velocity = previous ? clamp01(distance(wrist, previous.wrist) / deltaSeconds / 1.7) : 0;
+  const velocityVector = previous
+    ? {
+        x: (wrist.x - previous.wrist.x) / deltaSeconds,
+        y: (wrist.y - previous.wrist.y) / deltaSeconds
+      }
+    : { x: 0, y: 0 };
 
   return {
     handedness,
@@ -137,7 +213,8 @@ export const buildTrackedHand = (
     wrist,
     openness,
     pinch,
-    velocity
+    velocity,
+    velocityVector
   };
 };
 
@@ -145,8 +222,10 @@ export const analyzeMotion = (
   hands: TrackedHand[],
   pose: TrackedPose | undefined,
   face: TrackedFace | undefined,
-  timestamp: number
+  timestamp: number,
+  calibrationInput?: Partial<FaceGestureCalibration>
 ): MotionFrame => {
+  const calibration = resolveFaceGestureCalibration(calibrationInput);
   const shoulderLineY =
     pose?.leftShoulder && pose.rightShoulder ? (pose.leftShoulder.y + pose.rightShoulder.y) / 2 : undefined;
   const handsUp =
@@ -162,13 +241,56 @@ export const analyzeMotion = (
   const pinch = hands.some((hand) => hand.pinch > 0.64);
   const openPalm = hands.some((hand) => hand.openness > 0.56);
   const fastMotion = hands.some((hand) => hand.velocity > 0.36);
-  const neutral = !handsUp && !faceCover && !pinch && !openPalm && !fastMotion;
+  const faceWidth = face ? face.bounds.maxX - face.bounds.minX : 0;
+  const faceHeight = face ? face.bounds.maxY - face.bounds.minY : 0;
+  const faceTouchRadius = Math.min(0.18, Math.max(0.055, faceWidth * calibration.earPullRadius));
+  const mouthOpen = (face?.mouthOpenness ?? 0) > calibration.mouthOpenThreshold;
+  const smile = (face?.smile ?? 0) > calibration.smileThreshold;
+  const frown = (face?.frown ?? 0) > calibration.frownThreshold;
+  const eyesClosed = (face?.eyeClosure ?? 0) > calibration.eyesClosedThreshold;
+  const earPull =
+    Boolean(face?.leftEar && face.rightEar) &&
+    hands.some((hand) => {
+      if (!face?.leftEar || !face.rightEar) return false;
+      const nearLeftEar = handLandmarksNearPoint(hand, face.leftEar, faceTouchRadius) >= 2;
+      const nearRightEar = handLandmarksNearPoint(hand, face.rightEar, faceTouchRadius) >= 2;
+      return (nearLeftEar || nearRightEar) && (hand.pinch > calibration.earPullPinchThreshold || hand.openness > 0.42);
+    });
+  const chinPull =
+    Boolean(face?.chin) &&
+    hands.some((hand) => {
+      if (!face?.chin) return false;
+      const nearChin =
+        handLandmarksNearPoint(hand, face.chin, Math.min(0.17, Math.max(0.055, faceWidth * calibration.chinPullRadius))) >= 2 ||
+        distance(hand.centroid, face.chin) < Math.min(0.2, Math.max(0.075, faceWidth * (calibration.chinPullRadius + 0.06)));
+      const underChin = hand.centroid.y > face.chin.y - faceHeight * 0.06;
+      const lifting = hand.velocityVector.y < -calibration.chinPullLiftThreshold || hand.velocity > 0.28;
+      return nearChin && underChin && lifting;
+    });
+  const neutral =
+    !handsUp &&
+    !faceCover &&
+    !pinch &&
+    !openPalm &&
+    !fastMotion &&
+    !mouthOpen &&
+    !smile &&
+    !frown &&
+    !eyesClosed &&
+    !earPull &&
+    !chinPull;
   const gestures: GestureState = {
     handsUp,
     faceCover,
     pinch,
     openPalm,
     fastMotion,
+    mouthOpen,
+    smile,
+    frown,
+    eyesClosed,
+    earPull,
+    chinPull,
     neutral
   };
   const landmarkCount = hands.reduce(
@@ -183,6 +305,7 @@ export const analyzeMotion = (
     pose,
     face,
     gestures,
+    gestureControls: createGestureControlFrame(),
     confidence,
     landmarkCount,
     dominantIntent: getDominantIntent(gestures)
@@ -190,6 +313,12 @@ export const analyzeMotion = (
 };
 
 export const getDominantIntent = (gestures: GestureState) => {
+  if (gestures.earPull) return "Ear pull";
+  if (gestures.chinPull) return "Chin lift";
+  if (gestures.mouthOpen) return "Mouth open";
+  if (gestures.smile) return "Smile trigger";
+  if (gestures.frown) return "Frown trigger";
+  if (gestures.eyesClosed) return "Eyes closed";
   if (gestures.faceCover) return "Face ignition";
   if (gestures.handsUp) return "Lift melt";
   if (gestures.pinch) return "Pinch warp";
