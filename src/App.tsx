@@ -1175,6 +1175,13 @@ export function App() {
             </div>
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
+          <ViewerMotionHud
+            motion={motion}
+            scene={activeShaderScene}
+            settings={shaderSettings}
+            shaderValues={shaderValues}
+            visualMode={visualMode}
+          />
           {visualMode === "camera" && captureState !== "running" && (
             <EmptyState captureState={captureState} cameraIssue={cameraIssue} />
           )}
@@ -1851,6 +1858,83 @@ function ShaderParameterMapper({
           </div>
         );
       })}
+    </div>
+  );
+}
+
+type ViewerMotionHudProps = {
+  motion: MotionFrame | null;
+  scene: ShaderScene;
+  settings: Record<string, ShaderParameterSettings>;
+  shaderValues: number[];
+  visualMode: VisualMode;
+};
+
+const isSignalActive = (source: ShaderParameterSettings["source"], value: number) => {
+  switch (source) {
+    case "pinch":
+      return value > 0.58;
+    case "velocity":
+      return value > 0.34;
+    case "handOpen":
+    case "openPalm":
+    case "confidence":
+      return value > 0.5;
+    case "handsUp":
+    case "faceCover":
+      return value > 0.5;
+    case "noseX":
+    case "noseY":
+      return Math.abs(value - 0.5) > 0.18;
+    case "manual":
+    default:
+      return false;
+  }
+};
+
+function ViewerMotionHud({ motion, scene, settings, shaderValues, visualMode }: ViewerMotionHudProps) {
+  const signalRows = shaderMotionSources.filter((source) => source.id !== "manual");
+  const parameterRows = scene.parameters.map((parameter, index) => {
+    const setting = settings[parameter.id] ?? {
+      value: parameter.defaultValue,
+      source: parameter.motionDefault,
+      depth: 0
+    };
+    const source = shaderMotionSources.find((motionSource) => motionSource.id === setting.source);
+    const signalValue = getMotionSignalValue(setting.source, motion);
+
+    return {
+      id: parameter.id,
+      label: parameter.label,
+      sourceLabel: source?.label ?? "Manual",
+      signalValue,
+      value: shaderValues[index] ?? parameter.defaultValue
+    };
+  });
+
+  return (
+    <div className={visualMode === "shader" ? "viewer-motion-hud shader" : "viewer-motion-hud"} aria-label="Live mocap parameters">
+      <div className="viewer-signal-row">
+        {signalRows.map((source) => {
+          const value = getMotionSignalValue(source.id, motion);
+          return (
+            <div className={isSignalActive(source.id, value) ? "viewer-signal active" : "viewer-signal"} key={source.id}>
+              <span>{source.label}</span>
+              <strong>{isSignalActive(source.id, value) ? "active" : value.toFixed(2)}</strong>
+              <i style={{ transform: `scaleX(${Math.max(0.02, value)})` }} />
+            </div>
+          );
+        })}
+      </div>
+      <div className="viewer-param-row">
+        {parameterRows.map((parameter) => (
+          <div className={parameter.signalValue > 0.5 ? "viewer-param active" : "viewer-param"} key={parameter.id}>
+            <span>{parameter.label}</span>
+            <strong>{parameter.value.toFixed(2)}</strong>
+            <small>{parameter.sourceLabel}</small>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

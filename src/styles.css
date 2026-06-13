@@ -264,6 +264,111 @@ h1 {
   text-align: right;
 }
 
+.viewer-motion-hud {
+  position: absolute;
+  z-index: 2;
+  right: 10px;
+  bottom: 10px;
+  left: 10px;
+  display: grid;
+  gap: 8px;
+  max-height: 48%;
+  pointer-events: none;
+}
+
+.viewer-signal-row,
+.viewer-param-row {
+  display: grid;
+  gap: 6px;
+}
+
+.viewer-signal-row {
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+}
+
+.viewer-param-row {
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  overflow: hidden;
+}
+
+.viewer-signal,
+.viewer-param {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(158, 255, 204, 0.18);
+  border-radius: 8px;
+  background: rgba(7, 15, 15, 0.74);
+  backdrop-filter: blur(8px);
+}
+
+.viewer-signal {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 8px 8px;
+}
+
+.viewer-signal span,
+.viewer-param span,
+.viewer-param small {
+  min-width: 0;
+  overflow: hidden;
+  color: #9db4ad;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.viewer-signal strong,
+.viewer-param strong {
+  color: #dffbf3;
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+.viewer-signal i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: #85ffc7;
+  opacity: 0.72;
+  transform-origin: left center;
+}
+
+.viewer-signal.active,
+.viewer-param.active {
+  border-color: rgba(255, 209, 125, 0.72);
+  background: rgba(58, 42, 13, 0.78);
+}
+
+.viewer-signal.active span,
+.viewer-signal.active strong,
+.viewer-param.active span,
+.viewer-param.active strong {
+  color: #ffe9af;
+}
+
+.viewer-param {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  min-height: 42px;
+  padding: 7px 8px;
+}
+
+.viewer-param small {
+  grid-column: 1 / -1;
+  color: #a8ffd2;
+}
+
 .empty-state {
   position: absolute;
   inset: 0;

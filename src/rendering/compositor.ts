@@ -95,6 +95,8 @@ const randomUnit = (seed: number) => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
+const distance = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y);
+
 const drawRoundedRect = (
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -1282,6 +1284,112 @@ const drawRig = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: numb
   });
 };
 
+const handIsRaised = (motion: MotionFrame, hand: MotionFrame["hands"][number]) => {
+  const shoulderLineY =
+    motion.pose?.leftShoulder && motion.pose.rightShoulder
+      ? (motion.pose.leftShoulder.y + motion.pose.rightShoulder.y) / 2
+      : undefined;
+  return shoulderLineY !== undefined && (hand.wrist.y < shoulderLineY - 0.12 || hand.centroid.y < shoulderLineY - 0.16);
+};
+
+const handCoversFace = (motion: MotionFrame, hand: MotionFrame["hands"][number]) => {
+  const faceCenter = motion.face?.nose ?? motion.pose?.nose;
+  if (!faceCenter) return false;
+  const nearFaceLandmarks = hand.landmarks.filter((point) => distance(point, faceCenter) < 0.12).length;
+  return nearFaceLandmarks >= 3 || distance(hand.centroid, faceCenter) < 0.13;
+};
+
+const drawHandGestureFlash = (
+  ctx: CanvasRenderingContext2D,
+  center: Vec2,
+  label: string,
+  color: string,
+  radius: number,
+  phase: number
+) => {
+  const pulse = 0.58 + Math.sin(phase) * 0.42;
+  const glowRadius = radius * (0.82 + pulse * 0.34);
+
+  gradientDisc(ctx, center, glowRadius, [
+    [0, color.replace("0.92", `${0.26 + pulse * 0.24}`)],
+    [0.58, color.replace("0.92", `${0.12 + pulse * 0.12}`)],
+    [1, "rgba(0, 0, 0, 0)"]
+  ]);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(2, radius * 0.04);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = radius * 0.22;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius * (0.36 + pulse * 0.18), 0, Math.PI * 2);
+  ctx.stroke();
+
+  for (let ray = 0; ray < 8; ray += 1) {
+    const angle = phase * 0.12 + (Math.PI * 2 * ray) / 8;
+    const inner = radius * (0.46 + pulse * 0.08);
+    const outer = radius * (0.62 + pulse * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(center.x + Math.cos(angle) * inner, center.y + Math.sin(angle) * inner);
+    ctx.lineTo(center.x + Math.cos(angle) * outer, center.y + Math.sin(angle) * outer);
+    ctx.stroke();
+  }
+
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(5, 12, 11, 0.72)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1;
+  ctx.font = `${Math.max(10, Math.floor(radius * 0.18))}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const textWidth = ctx.measureText(label).width;
+  const labelWidth = textWidth + 16;
+  const labelHeight = Math.max(22, radius * 0.28);
+  const labelX = clamp(center.x - labelWidth / 2, 8, Math.max(8, ctx.canvas.width - labelWidth - 8));
+  const labelY = clamp(center.y - radius * 0.72, 8, Math.max(8, ctx.canvas.height - labelHeight - 8));
+  drawRoundedRect(ctx, labelX, labelY, labelWidth, labelHeight, 7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.fillText(label, labelX + labelWidth / 2, labelY + labelHeight / 2);
+  ctx.restore();
+};
+
+const drawHandGestureMarkers = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const phase = performance.now() / 82;
+  const baseRadius = Math.max(42, Math.min(width, height) * 0.09) * clamp(amount, 0.45, 1.35);
+
+  motion.hands.forEach((hand, handIndex) => {
+    const palm = pointToCanvas(hand.centroid, width, height);
+    const pinchPoint =
+      hand.landmarks[4] && hand.landmarks[8]
+        ? pointToCanvas(
+            {
+              x: (hand.landmarks[4].x + hand.landmarks[8].x) / 2,
+              y: (hand.landmarks[4].y + hand.landmarks[8].y) / 2
+            },
+            width,
+            height
+          )
+        : palm;
+    const offsetPhase = phase + handIndex * 0.9;
+
+    if (motion.gestures.handsUp && handIsRaised(motion, hand)) {
+      drawHandGestureFlash(ctx, palm, "HANDS UP", "rgba(255, 217, 105, 0.92)", baseRadius * 1.08, offsetPhase);
+    }
+    if (motion.gestures.openPalm && hand.openness > 0.56) {
+      drawHandGestureFlash(ctx, palm, "OPEN PALM", "rgba(126, 255, 189, 0.92)", baseRadius * (0.86 + hand.openness * 0.34), offsetPhase + 1.6);
+    }
+    if (motion.gestures.pinch && hand.pinch > 0.64) {
+      drawHandGestureFlash(ctx, pinchPoint, "PINCH", "rgba(255, 116, 190, 0.92)", baseRadius * 0.72, offsetPhase + 2.7);
+    }
+    if (motion.gestures.faceCover && handCoversFace(motion, hand)) {
+      drawHandGestureFlash(ctx, palm, "FACE COVER", "rgba(122, 190, 255, 0.92)", baseRadius * 0.95, offsetPhase + 3.8);
+    }
+  });
+};
+
 const drawIdleStage = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
   const gradient = ctx.createLinearGradient(0, 0, width, height);
   gradient.addColorStop(0, "#07100e");
@@ -1397,6 +1505,7 @@ export const renderFrame = (
   const baseAmount = Math.max(0.22, options.effectAmount);
   if (options.visualMode === "shader") {
     if (motion && options.showRig) {
+      drawHandGestureMarkers(ctx, motion, width, height, baseAmount);
       drawRig(ctx, motion, width, height);
     }
     return;
@@ -1459,6 +1568,7 @@ export const renderFrame = (
     drawOrbitOverlays(ctx, motion, width, height, gestureAmount);
   }
   if (options.showRig) {
+    drawHandGestureMarkers(ctx, motion, width, height, gestureAmount);
     drawRig(ctx, motion, width, height);
   }
 };
