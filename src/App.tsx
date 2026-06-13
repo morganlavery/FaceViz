@@ -8,6 +8,7 @@ import {
   Code2,
   Cpu,
   Crown,
+  ChevronDown,
   ChevronsUpDown,
   Download,
   Expand,
@@ -42,6 +43,7 @@ import {
   Waves
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import type { ReactNode } from "react";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
 import { renderFrame, type CompositorOptions } from "./rendering/compositor";
 import {
@@ -78,10 +80,15 @@ type WorkspaceTab = "preview" | "shader" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
 type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
+type RailSectionId = "output" | "system" | "shader" | "effects" | "tracking";
 type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
 type SignalNodePosition = {
   x: number;
   y: number;
+};
+type SignalGraphSize = {
+  width: number;
+  height: number;
 };
 
 const WASM_ROOT = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
@@ -204,13 +211,20 @@ const defaultSignalNodePositions: Record<SignalNodeId, SignalNodePosition> = {
   input: { x: 10, y: 62 }
 };
 
+const signalNodeIds: SignalNodeId[] = ["camera", "tracker", "core", "output", "consumer", "input"];
+
+const signalGraphViewBox: SignalGraphSize = {
+  width: 1000,
+  height: 520
+};
+
 const signalNodeDimensions: Record<SignalNodeId, { width: number; height: number }> = {
-  camera: { width: 215, height: 128 },
-  tracker: { width: 215, height: 128 },
-  core: { width: 238, height: 128 },
-  output: { width: 215, height: 128 },
-  consumer: { width: 215, height: 128 },
-  input: { width: 215, height: 128 }
+  camera: { width: 190, height: 116 },
+  tracker: { width: 190, height: 116 },
+  core: { width: 210, height: 116 },
+  output: { width: 190, height: 116 },
+  consumer: { width: 190, height: 116 },
+  input: { width: 190, height: 116 }
 };
 
 const shaderPresetFilePattern = /\.(infinightcaptureshader|facevizshader)(?:$|[?#])/i;
@@ -541,6 +555,13 @@ export function App() {
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceTab>("preview");
   const [visualMode, setVisualMode] = useState<VisualMode>("camera");
+  const [collapsedRailSections, setCollapsedRailSections] = useState<Record<RailSectionId, boolean>>({
+    output: false,
+    system: false,
+    shader: false,
+    effects: false,
+    tracking: false
+  });
   const [importedShaderScenes, setImportedShaderScenes] = useState<ShaderScene[]>(() => {
     try {
       const stored = window.localStorage.getItem(SHADER_LIBRARY_STORAGE_KEY);
@@ -588,6 +609,13 @@ export function App() {
     () => resolveShaderParameterValues(activeShaderScene, shaderSettings, motion),
     [activeShaderScene, motion, shaderSettings]
   );
+
+  const toggleRailSection = useCallback((sectionId: RailSectionId) => {
+    setCollapsedRailSections((current) => ({
+      ...current,
+      [sectionId]: !current[sectionId]
+    }));
+  }, []);
 
   const stopCapture = useCallback(() => {
     runningRef.current = false;
@@ -1253,7 +1281,23 @@ export function App() {
                       </div>
                     ))}
                 </div>
+              </section>
+            )}
+
+            {(activeWorkspace === "shader" || activeWorkspace === "mapping") && (
+              <section className="shader-parameter-dock" aria-label="Shader parameters">
+                <div className="shader-parameter-dock-header">
+                  <div>
+                    <p className="eyebrow">Shader Parameters</p>
+                    <h2>{activeShaderScene.label}</h2>
+                  </div>
+                  <div className="mapping-summary">
+                    <span>{activeShaderScene.parameters.length} controls</span>
+                    <strong>{activeShaderScene.imported ? "Imported" : "Built-in"}</strong>
+                  </div>
+                </div>
                 <ShaderParameterMapper
+                  compact
                   motion={motion}
                   onUpdate={updateShaderSetting}
                   scene={activeShaderScene}
@@ -1279,11 +1323,13 @@ export function App() {
       </section>
 
       <aside className="control-rail">
-        <section className="rail-section">
-          <div className="section-heading">
-            <span>Output</span>
-            <RadioTower size={16} />
-          </div>
+        <CollapsibleRailSection
+          collapsed={collapsedRailSections.output}
+          icon={RadioTower}
+          id="output"
+          onToggle={() => toggleRailSection("output")}
+          title="Output"
+        >
           <div className="output-switcher">
             {displayOutputStatuses.map((status) => (
               <button
@@ -1299,15 +1345,15 @@ export function App() {
           {isOutputStreaming ? (
             <button className="output-action stop" onClick={stopOutput}>
               <Pause size={16} />
-              Stop Syphon Output
+              Stop {selectedOutput?.label ?? "Native"} Output
             </button>
           ) : (
             <button className="output-action" onClick={startOutput} disabled={!selectedOutput?.available}>
               <RadioTower size={16} />
-              Start Syphon Output
+              Start {selectedOutput?.label ?? "Native"} Output
             </button>
           )}
-          <div className="output-composition-options" role="group" aria-label="Syphon output composition">
+          <div className="output-composition-options" role="group" aria-label="Output composition">
             {outputCompositionModes.map((compositionMode) => (
               <button
                 key={compositionMode.id}
@@ -1325,7 +1371,7 @@ export function App() {
             ))}
           </div>
           <div className="performance-control">
-            <div className="performance-options" role="group" aria-label="Syphon speed">
+            <div className="performance-options" role="group" aria-label="Output speed">
               {outputPerformanceModes.map((performanceMode) => (
                 <button
                   key={performanceMode.id}
@@ -1342,13 +1388,15 @@ export function App() {
             </div>
           </div>
           {outputError && <div className="output-error">{outputError}</div>}
-        </section>
+        </CollapsibleRailSection>
 
-        <section className="rail-section">
-          <div className="section-heading">
-            <span>System Core</span>
-            <MonitorCog size={16} />
-          </div>
+        <CollapsibleRailSection
+          collapsed={collapsedRailSections.system}
+          icon={MonitorCog}
+          id="system"
+          onToggle={() => toggleRailSection("system")}
+          title="System Core"
+        >
           <div className="system-stack">
             <SystemRow label="Runtime" value={systemStatus?.runtime === "electron" ? "Electron shell" : "Browser preview"} />
             <SystemRow label="Platform" value={systemStatus?.platform ?? "Detecting"} />
@@ -1359,13 +1407,15 @@ export function App() {
             />
             <SystemRow label={`${selectedOutput?.label ?? "Output"} sender`} value={selectedSystemOutput?.state ?? "pending"} />
           </div>
-        </section>
+        </CollapsibleRailSection>
 
-        <section className="rail-section">
-          <div className="section-heading">
-            <span>Shader Player</span>
-            <SlidersHorizontal size={16} />
-          </div>
+        <CollapsibleRailSection
+          collapsed={collapsedRailSections.shader}
+          icon={SlidersHorizontal}
+          id="shader"
+          onToggle={() => toggleRailSection("shader")}
+          title="Shader Player"
+        >
           <div className="shader-scene-list">
             {shaderLibrary.map((scene) => (
               <div className="shader-scene-row" key={scene.id}>
@@ -1500,21 +1550,15 @@ export function App() {
             {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
             {shaderImportNotice && <div className="shader-import-notice">{shaderImportNotice}</div>}
           </div>
-          <ShaderParameterMapper
-            compact
-            motion={motion}
-            onUpdate={updateShaderSetting}
-            scene={activeShaderScene}
-            settings={shaderSettings}
-            shaderValues={shaderValues}
-          />
-        </section>
+        </CollapsibleRailSection>
 
-        <section className="rail-section">
-          <div className="section-heading">
-            <span>Camera Effects</span>
-            <Sparkles size={16} />
-          </div>
+        <CollapsibleRailSection
+          collapsed={collapsedRailSections.effects}
+          icon={Sparkles}
+          id="effects"
+          onToggle={() => toggleRailSection("effects")}
+          title="Camera Effects"
+        >
           <div className="effect-list">
             {effects.map((effect) => {
               const Icon = effect.icon;
@@ -1546,13 +1590,15 @@ export function App() {
               onChange={(event) => setEffectAmount(Number(event.target.value))}
             />
           </label>
-        </section>
+        </CollapsibleRailSection>
 
-        <section className="rail-section">
-          <div className="section-heading">
-            <span>Tracking</span>
-            <ScanFace size={16} />
-          </div>
+        <CollapsibleRailSection
+          collapsed={collapsedRailSections.tracking}
+          icon={ScanFace}
+          id="tracking"
+          onToggle={() => toggleRailSection("tracking")}
+          title="Tracking"
+        >
           <label className="toggle-row">
             <span>Preview wireframe</span>
             <input type="checkbox" checked={showRig} onChange={(event) => setShowRig(event.target.checked)} />
@@ -1564,7 +1610,7 @@ export function App() {
               </span>
             ))}
           </div>
-        </section>
+        </CollapsibleRailSection>
       </aside>
     </main>
   );
@@ -1594,21 +1640,25 @@ function SignalGraph({
   systemStatus
 }: SignalGraphProps) {
   const graphRef = useRef<HTMLDivElement | null>(null);
+  const nodeElementsRef = useRef<Partial<Record<SignalNodeId, HTMLElement>>>({});
   const dragRef = useRef<{
     nodeId: SignalNodeId;
     offsetX: number;
     offsetY: number;
   } | null>(null);
+  const [graphSize, setGraphSize] = useState<SignalGraphSize>(signalGraphViewBox);
+  const [nodeDimensions, setNodeDimensions] = useState(signalNodeDimensions);
   const [nodePositions, setNodePositions] = useState(defaultSignalNodePositions);
   const syphon = systemStatus?.syphon;
   const outputConsumers = syphon?.outputConsumers ?? [];
   const inputSources = syphon?.inputSources ?? [];
   const primaryConsumer = outputConsumers[0];
+  const outputBusLabel = outputTarget === "syphon" ? "Syphon" : "Spout";
   const consumerStatus = primaryConsumer?.status ?? (syphon?.hasOutputClients ? "connected" : "inactive");
-  const consumerLabel = primaryConsumer?.appName ?? (syphon?.hasOutputClients ? "Syphon Client" : "Resolume / VJ App");
+  const consumerLabel = primaryConsumer?.appName ?? (syphon?.hasOutputClients ? `${outputBusLabel} Client` : "Resolume / VJ App");
   const consumerDetail =
     primaryConsumer?.detail ??
-    (isOutputStreaming ? "INFINIGHTCapture Output is visible on the Syphon bus." : "Waiting for INFINIGHTCapture Output.");
+    (isOutputStreaming ? `INFINIGHTCapture Output is visible on the ${outputBusLabel} bus.` : "Waiting for INFINIGHTCapture Output.");
   const outputState = selectedSystemOutput?.state ?? (isOutputStreaming ? "publishing" : "bridge-ready");
   const outputName = syphon?.outputName ?? "INFINIGHTCapture Output";
   const inputName = syphon?.inputName ?? "INFINIGHTCapture Input";
@@ -1631,6 +1681,67 @@ function SignalGraph({
     { id: "input-core", from: "input" as const, to: "core" as const, className: "input" }
   ];
 
+  const setSignalNodeElement = useCallback((nodeId: SignalNodeId, element: HTMLElement | null) => {
+    if (element) {
+      nodeElementsRef.current[nodeId] = element;
+      return;
+    }
+
+    delete nodeElementsRef.current[nodeId];
+  }, []);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph) return;
+
+    const updateMeasurements = () => {
+      const rect = graph.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setGraphSize((current) => {
+          if (Math.abs(current.width - rect.width) < 0.5 && Math.abs(current.height - rect.height) < 0.5) {
+            return current;
+          }
+
+          return { width: rect.width, height: rect.height };
+        });
+      }
+
+      setNodeDimensions((current) => {
+        let changed = false;
+        const next = { ...current };
+
+        for (const nodeId of signalNodeIds) {
+          const node = nodeElementsRef.current[nodeId];
+          if (!node) continue;
+
+          const nodeRect = node.getBoundingClientRect();
+          if (nodeRect.width <= 0 || nodeRect.height <= 0) continue;
+
+          if (
+            Math.abs(current[nodeId].width - nodeRect.width) >= 0.5 ||
+            Math.abs(current[nodeId].height - nodeRect.height) >= 0.5
+          ) {
+            next[nodeId] = { width: nodeRect.width, height: nodeRect.height };
+            changed = true;
+          }
+        }
+
+        return changed ? next : current;
+      });
+    };
+
+    updateMeasurements();
+
+    const resizeObserver = new ResizeObserver(updateMeasurements);
+    resizeObserver.observe(graph);
+    for (const nodeId of signalNodeIds) {
+      const node = nodeElementsRef.current[nodeId];
+      if (node) resizeObserver.observe(node);
+    }
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
   const moveNode = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const drag = dragRef.current;
     const graph = graphRef.current;
@@ -1639,9 +1750,9 @@ function SignalGraph({
     const rect = graph.getBoundingClientRect();
     const nextX = ((event.clientX - rect.left - drag.offsetX) / rect.width) * 100;
     const nextY = ((event.clientY - rect.top - drag.offsetY) / rect.height) * 100;
-    const dimensions = signalNodeDimensions[drag.nodeId];
-    const maxX = Math.max(0, 100 - (dimensions.width / 1000) * 100);
-    const maxY = Math.max(0, 100 - (dimensions.height / 520) * 100);
+    const dimensions = nodeDimensions[drag.nodeId];
+    const maxX = Math.max(0, 100 - (dimensions.width / rect.width) * 100);
+    const maxY = Math.max(0, 100 - (dimensions.height / rect.height) * 100);
 
     setNodePositions((current) => ({
       ...current,
@@ -1650,7 +1761,7 @@ function SignalGraph({
         y: clamp(nextY, 0, maxY)
       }
     }));
-  }, []);
+  }, [nodeDimensions]);
 
   const startNodeDrag = useCallback((nodeId: SignalNodeId, event: ReactPointerEvent<HTMLElement>) => {
     const graph = graphRef.current;
@@ -1677,21 +1788,46 @@ function SignalGraph({
   }, []);
 
   return (
-    <section className="signal-workspace" aria-label="Syphon signal graph">
+    <section className="signal-workspace" aria-label={`${outputBusLabel} signal graph`}>
       <div className="signal-graph" ref={graphRef}>
-        <svg className="signal-wires" viewBox="0 0 1000 520" role="presentation" aria-hidden="true">
+        <svg
+          className="signal-wires"
+          viewBox={`0 0 ${signalGraphViewBox.width} ${signalGraphViewBox.height}`}
+          preserveAspectRatio="none"
+          role="presentation"
+          aria-hidden="true"
+        >
           <defs>
-            <marker id="signal-arrow" markerHeight="8" markerWidth="8" orient="auto" refX="7" refY="4">
-              <path d="M0,0 L8,4 L0,8 Z" className="signal-arrow" />
+            <marker
+              id="signal-arrow"
+              markerHeight="12"
+              markerUnits="userSpaceOnUse"
+              markerWidth="14"
+              orient="auto"
+              refX="12"
+              refY="6"
+            >
+              <path d="M1,1 L13,6 L1,11 Z" className="signal-arrow" />
             </marker>
           </defs>
           {wires.map((wire) => (
-            <path
-              key={wire.id}
-              className={`signal-wire ${wire.className}`}
-              d={signalWirePath(nodePositions, wire.from, wire.to)}
-              markerEnd="url(#signal-arrow)"
-            />
+            <g key={wire.id}>
+              <path
+                className={`signal-wire ${wire.className}`}
+                d={signalWirePath(nodePositions, nodeDimensions, graphSize, wire.from, wire.to)}
+                markerEnd="url(#signal-arrow)"
+              />
+              {["0s", "-0.72s"].map((begin) => (
+                <circle className={`signal-pulse ${wire.className}`} key={begin} r="4.5">
+                  <animateMotion
+                    begin={begin}
+                    dur={wire.className === "pending" ? "2.1s" : wire.className === "input" ? "1.75s" : "1.45s"}
+                    path={signalWirePath(nodePositions, nodeDimensions, graphSize, wire.from, wire.to)}
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              ))}
+            </g>
           ))}
         </svg>
 
@@ -1701,6 +1837,7 @@ function SignalGraph({
           detail={`${fps} fps`}
           eyebrow="Source"
           label="Webcam"
+          onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
           onPointerUp={stopNodeDrag}
@@ -1714,6 +1851,7 @@ function SignalGraph({
           detail={`${motion?.landmarkCount ?? 0} landmarks`}
           eyebrow="Analyze"
           label="MediaPipe"
+          onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
           onPointerUp={stopNodeDrag}
@@ -1727,6 +1865,7 @@ function SignalGraph({
           detail={signalTokens.join("  /  ")}
           eyebrow="INFINIGHTCapture"
           label="Gesture Core"
+          onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
           onPointerUp={stopNodeDrag}
@@ -1740,6 +1879,7 @@ function SignalGraph({
           detail={selectedSystemOutput?.detail ?? syphon?.detail ?? "Output bridge pending"}
           eyebrow={selectedOutputLabel}
           label={outputName}
+          onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
           onPointerUp={stopNodeDrag}
@@ -1753,6 +1893,7 @@ function SignalGraph({
           detail={consumerDetail}
           eyebrow="Consumer"
           label={consumerLabel}
+          onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
           onPointerUp={stopNodeDrag}
@@ -1766,12 +1907,13 @@ function SignalGraph({
           detail={inputSources[0]?.detail ?? "Receiver path is reserved in the graph."}
           eyebrow="Input"
           label={inputSources[0]?.serverName ?? inputName}
+          onMeasureNode={setSignalNodeElement}
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
           onPointerUp={stopNodeDrag}
           position={nodePositions.input}
           status={inputSources[0]?.status ?? "inactive"}
-          value={inputSources[0]?.appName ?? "Syphon Input"}
+          value={inputSources[0]?.appName ?? `${outputBusLabel} Input`}
         />
       </div>
 
@@ -1945,6 +2087,7 @@ type SignalNodeProps = {
   eyebrow: string;
   id: SignalNodeId;
   label: string;
+  onMeasureNode: (nodeId: SignalNodeId, element: HTMLElement | null) => void;
   onPointerDown: (nodeId: SignalNodeId, event: ReactPointerEvent<HTMLElement>) => void;
   onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -1959,6 +2102,7 @@ function SignalNode({
   eyebrow,
   id,
   label,
+  onMeasureNode,
   onPointerDown,
   onPointerMove,
   onPointerUp,
@@ -1966,6 +2110,10 @@ function SignalNode({
   status,
   value
 }: SignalNodeProps) {
+  const nodeRef = useCallback((element: HTMLElement | null) => {
+    onMeasureNode(id, element);
+  }, [id, onMeasureNode]);
+
   return (
     <article
       className={`signal-node ${className}`}
@@ -1973,6 +2121,7 @@ function SignalNode({
       onPointerDown={(event) => onPointerDown(id, event)}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      ref={nodeRef}
       style={{ left: `${position.x}%`, top: `${position.y}%` }}
     >
       <div className="signal-node-header">
@@ -1990,23 +2139,29 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 
 const signalNodeAnchor = (
   positions: Record<SignalNodeId, SignalNodePosition>,
+  dimensionsByNode: Record<SignalNodeId, { width: number; height: number }>,
+  graphSize: SignalGraphSize,
   nodeId: SignalNodeId,
   side: "left" | "right"
 ) => {
   const position = positions[nodeId];
-  const dimensions = signalNodeDimensions[nodeId];
-  const x = position.x * 10 + (side === "right" ? dimensions.width : 0);
-  const y = position.y * 5.2 + dimensions.height / 2;
+  const dimensions = dimensionsByNode[nodeId];
+  const nodeWidth = graphSize.width > 0 ? (dimensions.width / graphSize.width) * signalGraphViewBox.width : 0;
+  const nodeHeight = graphSize.height > 0 ? (dimensions.height / graphSize.height) * signalGraphViewBox.height : 0;
+  const x = (position.x / 100) * signalGraphViewBox.width + (side === "right" ? nodeWidth : 0);
+  const y = (position.y / 100) * signalGraphViewBox.height + nodeHeight / 2;
   return { x, y };
 };
 
 const signalWirePath = (
   positions: Record<SignalNodeId, SignalNodePosition>,
+  dimensionsByNode: Record<SignalNodeId, { width: number; height: number }>,
+  graphSize: SignalGraphSize,
   from: SignalNodeId,
   to: SignalNodeId
 ) => {
-  const start = signalNodeAnchor(positions, from, "right");
-  const end = signalNodeAnchor(positions, to, "left");
+  const start = signalNodeAnchor(positions, dimensionsByNode, graphSize, from, "right");
+  const end = signalNodeAnchor(positions, dimensionsByNode, graphSize, to, "left");
   const distance = Math.max(80, Math.abs(end.x - start.x) * 0.48);
   const direction = end.x >= start.x ? 1 : -1;
   const controlStartX = start.x + distance * direction;
@@ -2061,6 +2216,43 @@ function Metric({ icon: Icon, label, value }: MetricProps) {
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
+  );
+}
+
+type CollapsibleRailSectionProps = {
+  children: ReactNode;
+  collapsed: boolean;
+  icon: typeof Activity;
+  id: RailSectionId;
+  onToggle: () => void;
+  title: string;
+};
+
+function CollapsibleRailSection({ children, collapsed, icon: Icon, id, onToggle, title }: CollapsibleRailSectionProps) {
+  const bodyId = `rail-section-${id}`;
+
+  return (
+    <section className={collapsed ? "rail-section collapsed" : "rail-section"}>
+      <button
+        aria-controls={bodyId}
+        aria-expanded={!collapsed}
+        className="section-heading section-toggle"
+        onClick={onToggle}
+        title={`${collapsed ? "Show" : "Hide"} ${title}`}
+        type="button"
+      >
+        <span>{title}</span>
+        <span className="section-heading-icons">
+          <Icon size={16} />
+          <ChevronDown className="section-chevron" size={15} />
+        </span>
+      </button>
+      {!collapsed && (
+        <div className="rail-section-body" id={bodyId}>
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 

@@ -17,7 +17,7 @@ INFINIGHTCapture is being built as a standalone app that tracks upper-body pose,
 - Runtime status panel for browser preview vs desktop shell
 - macOS camera permission bridge for the desktop shell
 - Motion-reactive shader player with saved Shadertoy-style, raw URL, file, and preset imports
-- Syphon output composition options for shader-only, shader plus wireframe, or shader plus wireframe plus live feed
+- Syphon/Spout output composition options for shader-only, shader plus wireframe, or shader plus wireframe plus live feed
 
 ## Run
 
@@ -51,6 +51,22 @@ npm run electron:dev
 ```bash
 npm run build
 ```
+
+## Package
+
+macOS Apple Silicon:
+
+```bash
+npm run package:mac
+```
+
+Windows x64:
+
+```powershell
+npm run package:win
+```
+
+The Windows package uses `native/SpoutFramePublisher.cpp` plus the Spout2 SDK runtime. Download the Spout2 SDK binaries from the official Spout2 project and either set `SPOUT_LIBRARY_DLL` to the full path of `SpoutLibrary.dll` or place the DLL at `native/vendor/Spout2/SpoutLibrary.dll` before running `npm run native:build:win` or `npm run package:win`.
 
 ## Character Filters And Licensing
 
@@ -90,8 +106,8 @@ The system boundary is intentionally thin:
 
 ## Next Milestones
 
-1. Add a real macOS Syphon sender behind `electron/systemBridge.cjs`.
-2. Add a Windows Spout sender behind the same output interface.
+1. Replace the canvas frame-copy output transport with a shared GPU texture path.
+2. Add a Spout receiver/input path behind the same output interface.
 3. Replace the canvas effects with a WebGL shader graph so landmarks become shader uniforms.
 4. Add a gesture-to-parameter modulation matrix.
 5. Add saveable presets for Resolume/VDMX/TouchDesigner performance setups.

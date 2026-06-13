@@ -2,6 +2,7 @@ node_modules/
 dist/
 release/
 native/build/
+native/vendor/Spout2/
 .DS_Store
 *.log
 *.local

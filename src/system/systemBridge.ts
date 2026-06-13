@@ -35,7 +35,7 @@ export const getBrowserSystemStatus = (): SystemStatus => ({
     hasOutputClients: false,
     outputConsumers: [],
     inputSources: [],
-    detail: "Open the Electron app to inspect native Syphon signal state.",
+    detail: "Open the Electron app to inspect native output signal state.",
     updatedAt: Date.now()
   }
 });
