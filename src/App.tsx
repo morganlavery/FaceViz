@@ -1252,6 +1252,126 @@ export function App() {
     }
   }, []);
 
+  const updateVisualDrumPadOverlay = useCallback((now = performance.now()) => {
+    const scene = activeShaderSceneRef.current;
+    const runtime = visualDrumPadRuntimeRef.current;
+    visualDrumPadOverlayRef.current = visualDrumPadsRef.current.map((pad, index) => {
+      const padRuntime = runtime[pad.id] ?? { cooldownUntil: 0, intensity: 0, lastHitAt: 0 };
+      const parameter = getVisualDrumPadParameter(scene, pad, index);
+      const layout = visualDrumPadLayout[index] ?? visualDrumPadLayout[0];
+      const ageMs = padRuntime.lastHitAt > 0 ? now - padRuntime.lastHitAt : Number.POSITIVE_INFINITY;
+      const intensity = padRuntime.lastHitAt > 0 ? Math.max(0, Math.exp(-ageMs / 420) * padRuntime.intensity) : 0;
+      runtime[pad.id] = {
+        ...padRuntime,
+        intensity
+      };
+
+      return {
+        id: pad.id,
+        label: pad.label,
+        parameterLabel: parameter?.label ?? "No target",
+        value: pad.value,
+        enabled: pad.enabled && Boolean(parameter),
+        intensity,
+        ...layout
+      };
+    });
+
+    compositorOptionsRef.current.visualDrumPads = visualDrumPadOverlayRef.current;
+    outputCompositorOptionsRef.current.visualDrumPads = visualDrumPadOverlayRef.current;
+  }, []);
+
+  const processVisualDrumPadHits = useCallback((nextMotion: MotionFrame) => {
+    const scene = activeShaderSceneRef.current;
+    const pads = visualDrumPadsRef.current;
+    if (scene.parameters.length === 0 || pads.every((pad) => !pad.enabled)) {
+      visualDrumPadInsideRef.current = new Set();
+      updateVisualDrumPadOverlay(nextMotion.timestamp);
+      return;
+    }
+
+    const previousInside = visualDrumPadInsideRef.current;
+    const nextInside = new Set<string>();
+    const hits: Array<{ parameter: ShaderParameterDefinition; value: number; pad: VisualDrumPadMapping }> = [];
+
+    pads.forEach((pad, index) => {
+      if (!pad.enabled) return;
+      const layout = visualDrumPadLayout[index];
+      const parameter = getVisualDrumPadParameter(scene, pad, index);
+      if (!layout || !parameter) return;
+
+      let inside = false;
+      let impact = 0;
+      for (const hand of nextMotion.hands) {
+        const candidates = [
+          ...VISUAL_DRUM_PAD_TIP_INDICES.map((tipIndex) => hand.landmarks[tipIndex]).filter(Boolean),
+          hand.centroid
+        ];
+        for (const point of candidates) {
+          const displayPoint = {
+            x: 1 - point.x,
+            y: point.y
+          };
+          if (!visualDrumPointInsidePad(displayPoint, layout)) continue;
+          inside = true;
+          impact = Math.max(impact, hand.velocity);
+        }
+      }
+
+      if (!inside) return;
+      nextInside.add(pad.id);
+
+      const runtime = visualDrumPadRuntimeRef.current[pad.id] ?? {
+        cooldownUntil: 0,
+        intensity: 0,
+        lastHitAt: 0
+      };
+      const entered = !previousInside.has(pad.id);
+      const velocityHit = impact >= pad.velocityThreshold;
+      if ((entered || velocityHit) && nextMotion.timestamp >= runtime.cooldownUntil) {
+        const mappedValue = parameter.min + pad.value * (parameter.max - parameter.min);
+        hits.push({ parameter, value: mappedValue, pad });
+        visualDrumPadRuntimeRef.current[pad.id] = {
+          cooldownUntil: nextMotion.timestamp + VISUAL_DRUM_PAD_COOLDOWN_MS,
+          intensity: Math.max(0.72, impact),
+          lastHitAt: nextMotion.timestamp
+        };
+      }
+    });
+
+    visualDrumPadInsideRef.current = nextInside;
+    if (hits.length > 0) {
+      setShaderSettings((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const hit of hits) {
+          const currentSetting = next[hit.parameter.id] ?? {
+            value: hit.parameter.defaultValue,
+            source: hit.parameter.motionDefault,
+            depth: 0
+          };
+          if (
+            currentSetting.source === "manual" &&
+            currentSetting.depth === 0 &&
+            Math.abs(currentSetting.value - hit.value) < 0.005
+          ) {
+            continue;
+          }
+          changed = true;
+          next[hit.parameter.id] = {
+            ...currentSetting,
+            value: hit.value,
+            source: "manual",
+            depth: 0
+          };
+        }
+        return changed ? next : current;
+      });
+    }
+
+    updateVisualDrumPadOverlay(nextMotion.timestamp);
+  }, [updateVisualDrumPadOverlay]);
+
   const renderLoop = useCallback(() => {
     const canvas = canvasRef.current;
     const outputCanvas = outputCanvasRef.current;
@@ -1300,6 +1420,7 @@ export function App() {
         };
         motionRef.current = nextMotion;
         executeGestureActionRoutes(gestureControls);
+        processVisualDrumPadHits(nextMotion);
         setMotion(nextMotion);
         setLatency(performance.now() - frameStartRef.current);
       } catch (nextError) {
@@ -1309,6 +1430,7 @@ export function App() {
       }
     }
 
+    updateVisualDrumPadOverlay(now);
     renderFrame(canvas, video, motionRef.current, compositorOptionsRef.current);
     if (outputCanvas) {
       renderFrame(outputCanvas, video, motionRef.current, outputCompositorOptionsRef.current);
@@ -1322,7 +1444,7 @@ export function App() {
     }
 
     rafRef.current = requestAnimationFrame(renderLoop);
-  }, [executeGestureActionRoutes]);
+  }, [executeGestureActionRoutes, processVisualDrumPadHits, updateVisualDrumPadOverlay]);
 
   const startCapture = useCallback(async () => {
     if (captureState === "loading" || captureState === "running") return;
@@ -1529,7 +1651,8 @@ export function App() {
       visualMode,
       trackingMode: mode,
       shaderScene: activeShaderScene,
-      shaderParameters: shaderSettings
+      shaderParameters: shaderSettings,
+      visualDrumPads: visualDrumPadOverlayRef.current
     };
     outputCompositorOptionsRef.current = {
       showRig: selectedOutputComposition.showRig,
@@ -1539,7 +1662,8 @@ export function App() {
       trackingMode: mode,
       visualMode: "shader",
       shaderScene: activeShaderScene,
-      shaderParameters: shaderSettings
+      shaderParameters: shaderSettings,
+      visualDrumPads: visualDrumPadOverlayRef.current
     };
   }, [
     activeShaderScene,
@@ -1819,6 +1943,18 @@ export function App() {
     setGestureActionNotice("Matrix reset.");
   }, []);
 
+  const updateVisualDrumPad = useCallback((padId: string, patch: Partial<VisualDrumPadMapping>) => {
+    setVisualDrumPads((current) =>
+      normalizeVisualDrumPads(current.map((pad) => pad.id === padId ? { ...pad, ...patch } : pad))
+    );
+  }, []);
+
+  const resetVisualDrumPads = useCallback(() => {
+    setVisualDrumPads(createDefaultVisualDrumPads());
+    visualDrumPadRuntimeRef.current = {};
+    visualDrumPadInsideRef.current = new Set();
+  }, []);
+
   const exportGestureActionMatrix = useCallback(() => {
     const preset: GestureActionMatrixPreset = {
       schema: GESTURE_ACTION_MATRIX_PRESET_SCHEMA,
@@ -2054,6 +2190,12 @@ export function App() {
                       </div>
                     ))}
                 </div>
+                <VisualDrumPadEditor
+                  activeScene={activeShaderScene}
+                  onReset={resetVisualDrumPads}
+                  onUpdate={updateVisualDrumPad}
+                  pads={visualDrumPads}
+                />
                 <GestureActionMatrixEditor
                   activeScene={activeShaderScene}
                   fileInputRef={gestureActionFileInputRef}
