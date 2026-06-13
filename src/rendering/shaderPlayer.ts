@@ -36,7 +36,8 @@ export type ShaderScene = {
   author?: string;
   imported?: boolean;
   license?: string;
-  source?: "builtin" | "shadertoy";
+  source?: "builtin" | "file" | "preset" | "raw" | "shadertoy";
+  sourceUrl?: string;
 };
 
 type MotionUniforms = {
@@ -63,6 +64,13 @@ uniform vec4 fvPose;
 uniform vec4 fvGestures;
 uniform vec4 fvParamA;
 uniform vec4 fvParamB;
+uniform vec4 fvParamC;
+uniform vec4 fvParamD;
+uniform vec4 fvParamE;
+uniform vec4 fvParamF;
+uniform vec4 fvParamG;
+uniform vec4 fvParamH;
+uniform float fvParams[32];
 `;
 
 export const shaderMotionSources: Array<{ id: ShaderMotionSource; label: string }> = [
@@ -82,7 +90,7 @@ export const SHADER_LIBRARY_STORAGE_KEY = "faceviz.shaderLibrary.v1";
 
 export type StoredShaderScene = Pick<
   ShaderScene,
-  "author" | "detail" | "fragment" | "id" | "imported" | "label" | "license" | "parameters" | "source"
+  "author" | "detail" | "fragment" | "id" | "imported" | "label" | "license" | "parameters" | "source" | "sourceUrl"
 >;
 
 export type ImportedShaderInput = {
@@ -90,6 +98,23 @@ export type ImportedShaderInput = {
   fragment: string;
   label: string;
   license?: string;
+  parameters?: ShaderParameterDefinition[];
+  source?: "file" | "preset" | "raw" | "shadertoy";
+  sourceUrl?: string;
+};
+
+export const FACEVIZ_SHADER_PRESET_SCHEMA = "faceviz.shader.v1";
+
+export type INFINIGHTCaptureShaderPreset = {
+  schema: typeof FACEVIZ_SHADER_PRESET_SCHEMA;
+  name: string;
+  fragment: string;
+  author?: string;
+  license?: string;
+  source?: ShaderScene["source"];
+  sourceUrl?: string;
+  parameters?: ShaderParameterDefinition[];
+  mappings?: Record<string, ShaderParameterSettings>;
 };
 
 export const shaderScenes: ShaderScene[] = [
@@ -274,21 +299,57 @@ export const normalizeShadertoyFragment = (source: string) =>
     )
     .trim();
 
-export const createImportedShaderScene = ({ author, fragment, label, license }: ImportedShaderInput): ShaderScene => {
+export const extractShadertoyId = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const directId = /^[a-zA-Z0-9]{6,12}$/.test(trimmed) ? trimmed : "";
+  if (directId) return directId;
+
+  try {
+    const url = new URL(trimmed);
+    const viewMatch = url.pathname.match(/\/view\/([a-zA-Z0-9]+)/);
+    if (viewMatch?.[1]) return viewMatch[1];
+    const id = url.searchParams.get("id") ?? url.searchParams.get("shader");
+    return id && /^[a-zA-Z0-9]{6,12}$/.test(id) ? id : "";
+  } catch {
+    return "";
+  }
+};
+
+export const createImportedShaderScene = ({
+  author,
+  fragment,
+  label,
+  license,
+  parameters,
+  source = "shadertoy",
+  sourceUrl
+}: ImportedShaderInput): ShaderScene => {
   const normalized = normalizeShadertoyFragment(fragment);
   const fallbackLabel = label.trim() || "Imported Shader";
   const id = `imported-${slugify(fallbackLabel) || "shader"}-${Date.now().toString(36)}`;
+  const detail =
+    source === "file"
+      ? `Imported from ${sourceUrl?.trim() || "shader file"}`
+      : source === "raw"
+        ? `Imported from ${sourceUrl?.trim() || "raw GLSL URL"}`
+        : source === "preset"
+          ? `Imported from ${sourceUrl?.trim() || "INFINIGHTCapture preset"}`
+          : author?.trim()
+            ? `Imported from ${author.trim()}`
+            : "Imported Shadertoy-style scene";
 
   return {
     id,
     label: fallbackLabel,
-    detail: author?.trim() ? `Imported from ${author.trim()}` : "Imported Shadertoy-style scene",
+    detail,
     author: author?.trim() || undefined,
     fragment: normalized,
     imported: true,
     license: license?.trim() || undefined,
-    source: "shadertoy",
-    parameters: [
+    source,
+    sourceUrl: sourceUrl?.trim() || undefined,
+    parameters: parameters?.length ? parameters : [
       { id: "mocapA", label: "Mocap A", min: 0, max: 1, defaultValue: 0.5, motionDefault: "handOpen" },
       { id: "mocapB", label: "Mocap B", min: 0, max: 1, defaultValue: 0.5, motionDefault: "pinch" },
       { id: "mocapC", label: "Mocap C", min: 0, max: 1, defaultValue: 0.5, motionDefault: "velocity" },
@@ -450,8 +511,15 @@ export class MotionShaderPlayer {
 
     const gl = this.gl;
     const uniforms = getMotionUniforms(motion);
-    const paramA = [parameters[0] ?? 0, parameters[1] ?? 0, parameters[2] ?? 0, parameters[3] ?? 0] as const;
-    const paramB = [parameters[4] ?? 0, parameters[5] ?? 0, parameters[6] ?? 0, parameters[7] ?? 0] as const;
+    const shaderParams = Array.from({ length: 32 }, (_, index) => parameters[index] ?? 0);
+    const paramA = shaderParams.slice(0, 4) as [number, number, number, number];
+    const paramB = shaderParams.slice(4, 8) as [number, number, number, number];
+    const paramC = shaderParams.slice(8, 12) as [number, number, number, number];
+    const paramD = shaderParams.slice(12, 16) as [number, number, number, number];
+    const paramE = shaderParams.slice(16, 20) as [number, number, number, number];
+    const paramF = shaderParams.slice(20, 24) as [number, number, number, number];
+    const paramG = shaderParams.slice(24, 28) as [number, number, number, number];
+    const paramH = shaderParams.slice(28, 32) as [number, number, number, number];
 
     gl.viewport(0, 0, width, height);
     gl.useProgram(this.program);
@@ -476,6 +544,13 @@ export class MotionShaderPlayer {
     );
     gl.uniform4f(gl.getUniformLocation(this.program, "fvParamA"), paramA[0], paramA[1], paramA[2], paramA[3]);
     gl.uniform4f(gl.getUniformLocation(this.program, "fvParamB"), paramB[0], paramB[1], paramB[2], paramB[3]);
+    gl.uniform4f(gl.getUniformLocation(this.program, "fvParamC"), paramC[0], paramC[1], paramC[2], paramC[3]);
+    gl.uniform4f(gl.getUniformLocation(this.program, "fvParamD"), paramD[0], paramD[1], paramD[2], paramD[3]);
+    gl.uniform4f(gl.getUniformLocation(this.program, "fvParamE"), paramE[0], paramE[1], paramE[2], paramE[3]);
+    gl.uniform4f(gl.getUniformLocation(this.program, "fvParamF"), paramF[0], paramF[1], paramF[2], paramF[3]);
+    gl.uniform4f(gl.getUniformLocation(this.program, "fvParamG"), paramG[0], paramG[1], paramG[2], paramG[3]);
+    gl.uniform4f(gl.getUniformLocation(this.program, "fvParamH"), paramH[0], paramH[1], paramH[2], paramH[3]);
+    gl.uniform1fv(gl.getUniformLocation(this.program, "fvParams[0]"), new Float32Array(shaderParams));
     gl.uniform1f(gl.getUniformLocation(this.program, "fvAmount"), amount);
 
     const position = gl.getAttribLocation(this.program, "aPosition");

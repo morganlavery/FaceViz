@@ -1,8 +1,8 @@
-# FaceViz
+# INFINIGHTCapture
 
 Gesture-reactive webcam mocap compositor for VJ workflows.
 
-FaceViz is being built as a standalone app that tracks upper-body pose, hands, and fingers from a webcam, turns those landmarks into gesture signals, drives real-time visual effects, and prepares a GPU output path for Syphon on macOS and Spout on Windows.
+INFINIGHTCapture is being built as a standalone app that tracks upper-body pose, hands, and fingers from a webcam, turns those landmarks into gesture signals, drives real-time visual effects, and prepares a GPU output path for Syphon on macOS and Spout on Windows.
 
 ## Current MVP
 
@@ -16,6 +16,8 @@ FaceViz is being built as a standalone app that tracks upper-body pose, hands, a
 - Electron preload/main-process system bridge
 - Runtime status panel for browser preview vs desktop shell
 - macOS camera permission bridge for the desktop shell
+- Motion-reactive shader player with saved Shadertoy-style, raw URL, file, and preset imports
+- Syphon output composition options for shader-only, shader plus wireframe, or shader plus wireframe plus live feed
 
 ## Run
 
@@ -26,6 +28,17 @@ npm run dev
 ```
 
 Open `http://127.0.0.1:5173/`.
+
+Shader import paths:
+
+- Paste Shadertoy-style `mainImage(out vec4 fragColor, in vec2 fragCoord)` code in the Advanced importer.
+- Drag `.frag`, `.fs`, `.glsl`, `.txt`, or `.infinightcaptureshader` files onto the Shader Player importer.
+- Paste a Shadertoy URL, GitHub raw/blob URL, Gist URL, raw GLSL URL, or `.infinightcaptureshader` URL into Shader URL.
+- Export the active shader as an `.infinightcaptureshader` preset to preserve shader code, metadata, parameters, and mocap mappings.
+
+To import directly from a Shadertoy URL, set `VITE_SHADERTOY_API_KEY` in your local environment before starting Vite. Shadertoy API keys are free, but Shadertoy currently requires a Silver or Gold account, limits usage to 1500 requests per month, and only exposes shaders set to Public + API. INFINIGHTCapture saves imported shader code locally, so the API is only called when adding a new Shadertoy link.
+
+INFINIGHTCapture uses Shadertoy.com API. Respect the license attached to each shader. URL import currently supports single-pass procedural shaders; Shadertoys that rely on texture, video, sound, webcam, VR, or multipass buffer inputs need a future asset/channel implementation. Without an API key, use the Advanced importer and paste the shader's `mainImage` code.
 
 For the desktop shell:
 
@@ -41,7 +54,7 @@ npm run build
 
 ## Character Filters And Licensing
 
-FaceViz character filters are drawn procedurally in `src/rendering/compositor.ts`; the app does not bundle third-party character images or production assets.
+INFINIGHTCapture character filters are drawn procedurally in `src/rendering/compositor.ts`; the app does not bundle third-party character images or production assets.
 
 - Toon Kit is a CC0-style original filter inspired by public-domain/CC0 game-asset conventions such as Kenney's CC0 character packs. No third-party artwork is embedded.
 - Big Buck, Sintel, Spring, Sprite Fright, and Caminandes are procedural tribute filters inspired by Blender open movie characters and motifs. They do not copy source production files, but they should be credited as inspired by Blender open movie projects when distributed.
@@ -62,7 +75,7 @@ webcam
   -> MediaPipe hand + pose tracking
   -> gesture engine
   -> canvas shader/effect compositor
-  -> FaceViz system bridge
+  -> INFINIGHTCapture system bridge
       browser preview: UI and tracking only
       Electron shell: native permissions and output control
       native core: Syphon/Spout frame publisher

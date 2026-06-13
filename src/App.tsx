@@ -8,12 +8,16 @@ import {
   Code2,
   Cpu,
   Crown,
+  ChevronsUpDown,
+  Download,
   Expand,
+  FileUp,
   Fingerprint,
   Flame,
   FlipHorizontal2,
   Hand,
   Leaf,
+  Link2,
   Loader2,
   Maximize2,
   MonitorCog,
@@ -41,16 +45,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
 import { renderFrame, type CompositorOptions } from "./rendering/compositor";
 import {
+  FACEVIZ_SHADER_PRESET_SCHEMA,
   SHADER_LIBRARY_STORAGE_KEY,
   createImportedShaderScene,
   createDefaultShaderSettings,
+  extractShadertoyId,
   getShaderSceneFromLibrary,
   getMotionSignalValue,
   isStoredShaderScene,
   resolveShaderParameterValues,
   shaderMotionSources,
   shaderScenes,
+  type INFINIGHTCaptureShaderPreset,
   type ShaderScene,
+  type ShaderParameterDefinition,
   type ShaderParameterSettings
 } from "./rendering/shaderPlayer";
 import {
@@ -66,8 +74,9 @@ import type { Handedness, Landmark, MotionFrame, PreviousHandSample } from "./tr
 
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
-type WorkspaceTab = "preview" | "shader" | "signal";
+type WorkspaceTab = "preview" | "shader" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
+type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
 type SignalNodeId = "camera" | "tracker" | "core" | "output" | "consumer" | "input";
 type SignalNodePosition = {
@@ -109,8 +118,16 @@ const effects = [
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Preview" },
   { id: "shader", label: "Shader" },
+  { id: "mapping", label: "Mapping" },
   { id: "signal", label: "Signal" }
 ];
+
+const workspaceTabIcons: Record<WorkspaceTab, typeof Activity> = {
+  preview: ScanFace,
+  shader: Sparkles,
+  mapping: SlidersHorizontal,
+  signal: Activity
+};
 
 const defaultShaderImportSource = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
   vec2 uv = (fragCoord * 2.0 - iResolution.xy) / iResolution.y;
@@ -148,6 +165,36 @@ const outputPerformanceModes: Array<{
   { id: "sharp", label: "Sharp", width: 1280, height: 720, fps: 30 }
 ];
 
+const outputCompositionModes: Array<{
+  id: OutputCompositionMode;
+  label: string;
+  detail: string;
+  showRig: boolean;
+  includeCameraFeed: boolean;
+}> = [
+  {
+    id: "shader",
+    label: "Shader",
+    detail: "Shader only",
+    showRig: false,
+    includeCameraFeed: false
+  },
+  {
+    id: "shaderWire",
+    label: "Shader + Wire",
+    detail: "Shader with mocap wireframe",
+    showRig: true,
+    includeCameraFeed: false
+  },
+  {
+    id: "shaderWireCamera",
+    label: "Full Composite",
+    detail: "Shader, wireframe, and live feed",
+    showRig: true,
+    includeCameraFeed: true
+  }
+];
+
 const defaultSignalNodePositions: Record<SignalNodeId, SignalNodePosition> = {
   camera: { x: 5, y: 12 },
   tracker: { x: 27, y: 23 },
@@ -166,6 +213,230 @@ const signalNodeDimensions: Record<SignalNodeId, { width: number; height: number
   input: { width: 215, height: 128 }
 };
 
+const shaderPresetFilePattern = /\.(infinightcaptureshader|facevizshader)(?:$|[?#])/i;
+const shaderSourceFilePattern = /\.(infinightcaptureshader|facevizshader|frag|fs|glsl|json|txt)$/i;
+
+type ShadertoyApiResponse = {
+  Error?: string;
+  Shader?: {
+    info?: {
+      license?: string;
+      name?: string;
+      username?: string;
+    };
+    renderpass?: Array<{
+      code?: string;
+      inputs?: Array<{
+        ctype?: string;
+        src?: string;
+      }>;
+      name?: string;
+      type?: string;
+    }>;
+  };
+};
+
+const getShadertoyApiKey = () =>
+  ((import.meta as unknown as { env?: Record<string, string | undefined> }).env?.VITE_SHADERTOY_API_KEY ?? "").trim();
+
+const fetchShadertoyImport = async (linkOrId: string) => {
+  const id = extractShadertoyId(linkOrId);
+  if (!id) {
+    throw new Error("Paste a Shadertoy URL like https://www.shadertoy.com/view/XXXXXX.");
+  }
+
+  const apiKey = getShadertoyApiKey();
+  if (!apiKey) {
+    throw new Error("Set VITE_SHADERTOY_API_KEY in the app environment, or paste the shader's mainImage code below.");
+  }
+
+  const response = await fetch(`https://www.shadertoy.com/api/v1/shaders/${id}?key=${encodeURIComponent(apiKey)}`);
+  if (!response.ok) {
+    throw new Error(`Shadertoy returned ${response.status}. Check the shader link or API key.`);
+  }
+
+  const data = (await response.json()) as ShadertoyApiResponse;
+  if (data.Error) {
+    throw new Error(data.Error);
+  }
+
+  const shader = data.Shader;
+  const unsupportedPasses =
+    shader?.renderpass?.filter((renderPass) => renderPass.type && !["common", "image"].includes(renderPass.type)) ?? [];
+  if (unsupportedPasses.length > 0) {
+    throw new Error("That Shadertoy uses multipass, sound, VR, or buffer passes that INFINIGHTCapture cannot run yet.");
+  }
+
+  const pass =
+    shader?.renderpass?.find((renderPass) => renderPass.type === "image" && renderPass.code?.includes("mainImage")) ??
+    shader?.renderpass?.find((renderPass) => renderPass.code?.includes("mainImage"));
+
+  if (!pass?.code) {
+    throw new Error("No image pass with mainImage was found in that Shadertoy.");
+  }
+  if (pass.inputs?.length) {
+    const inputTypes = Array.from(new Set(pass.inputs.map((input) => input.ctype ?? "asset"))).join(", ");
+    throw new Error(`That Shadertoy uses ${inputTypes} inputs. INFINIGHTCapture URL import currently supports single-pass procedural shaders.`);
+  }
+
+  return {
+    author: shader?.info?.username ?? "",
+    fragment: pass.code,
+    label: shader?.info?.name ?? `Shadertoy ${id}`,
+    license: shader?.info?.license ?? "Check Shadertoy license",
+    sourceUrl: `https://www.shadertoy.com/view/${id}`
+  };
+};
+
+const shaderMotionSourceIds = new Set<string>(shaderMotionSources.map((source) => source.id));
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+const normalizeShaderParameterDefinition = (value: unknown): ShaderParameterDefinition | null => {
+  if (!isRecord(value)) return null;
+  const id = typeof value.id === "string" ? value.id.trim() : "";
+  const label = typeof value.label === "string" ? value.label.trim() : id;
+  const min = typeof value.min === "number" ? value.min : 0;
+  const max = typeof value.max === "number" ? value.max : 1;
+  const defaultValue = typeof value.defaultValue === "number" ? value.defaultValue : min + (max - min) * 0.5;
+  const motionDefault = typeof value.motionDefault === "string" && shaderMotionSourceIds.has(value.motionDefault as ShaderParameterDefinition["motionDefault"])
+    ? value.motionDefault
+    : "manual";
+
+  if (!id || max <= min) return null;
+  return {
+    id,
+    label,
+    min,
+    max,
+    defaultValue: Math.min(Math.max(defaultValue, min), max),
+    motionDefault: motionDefault as ShaderParameterDefinition["motionDefault"]
+  };
+};
+
+const normalizeShaderSettings = (
+  scene: ShaderScene,
+  settings: Record<string, ShaderParameterSettings> | undefined
+) => {
+  const defaults = createDefaultShaderSettings(scene);
+  if (!settings) return defaults;
+
+  return Object.fromEntries(
+    scene.parameters.map((parameter) => {
+      const setting = settings[parameter.id];
+      if (!setting) return [parameter.id, defaults[parameter.id]];
+      const source = shaderMotionSourceIds.has(setting.source) ? setting.source : defaults[parameter.id].source;
+      return [
+        parameter.id,
+        {
+          value: Math.min(Math.max(setting.value, parameter.min), parameter.max),
+          source,
+          depth: Math.min(Math.max(setting.depth, 0), 1)
+        }
+      ];
+    })
+  );
+};
+
+const parseINFINIGHTCaptureShaderPreset = (value: string, sourceUrl = "") => {
+  const parsed = JSON.parse(value) as unknown;
+  if (!isRecord(parsed) || parsed.schema !== FACEVIZ_SHADER_PRESET_SCHEMA) {
+    throw new Error("That file is not an INFINIGHTCapture shader preset.");
+  }
+
+  const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+  const fragment = typeof parsed.fragment === "string" ? parsed.fragment : "";
+  if (!name || !fragment.includes("mainImage")) {
+    throw new Error("INFINIGHTCapture presets need a name and a mainImage fragment.");
+  }
+
+  const parameters = Array.isArray(parsed.parameters)
+    ? parsed.parameters
+        .map(normalizeShaderParameterDefinition)
+        .filter((parameter): parameter is ShaderParameterDefinition => Boolean(parameter))
+    : undefined;
+  const mappings = isRecord(parsed.mappings) ? parsed.mappings as Record<string, ShaderParameterSettings> : undefined;
+
+  return {
+    author: typeof parsed.author === "string" ? parsed.author : "",
+    fragment,
+    label: name,
+    license: typeof parsed.license === "string" ? parsed.license : "INFINIGHTCapture preset",
+    mappings,
+    parameters,
+    source: "preset" as const,
+    sourceUrl: typeof parsed.sourceUrl === "string" ? parsed.sourceUrl : sourceUrl
+  };
+};
+
+const isLikelyINFINIGHTCapturePreset = (source: string, sourceUrl = "") => {
+  if (shaderPresetFilePattern.test(sourceUrl)) return true;
+  try {
+    const parsed = JSON.parse(source) as unknown;
+    return isRecord(parsed) && parsed.schema === FACEVIZ_SHADER_PRESET_SCHEMA;
+  } catch {
+    return false;
+  }
+};
+
+const getRawShaderUrl = (value: string) => {
+  const trimmed = value.trim();
+  const url = new URL(trimmed);
+  if (url.hostname === "github.com") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const blobIndex = parts.indexOf("blob");
+    if (parts.length > 4 && blobIndex === 2) {
+      const [owner, repo] = parts;
+      const branch = parts[3];
+      const path = parts.slice(4).join("/");
+      return `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${path}`;
+    }
+  }
+  if (url.hostname === "gist.github.com") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    if (parts.length >= 2) {
+      return `https://gist.githubusercontent.com/${parts[0]}/${parts[1]}/raw`;
+    }
+  }
+  return url.toString();
+};
+
+const inferShaderLabelFromUrl = (url: string) => {
+  try {
+    const parsed = new URL(url);
+    const lastPart = decodeURIComponent(parsed.pathname.split("/").filter(Boolean).pop() ?? "").trim();
+    return lastPart.replace(/\.(infinightcaptureshader|facevizshader|frag|fs|glsl|txt|json)$/i, "") || parsed.hostname;
+  } catch {
+    return "Raw Shader";
+  }
+};
+
+const fetchRawShaderImport = async (link: string) => {
+  const rawUrl = getRawShaderUrl(link);
+  const response = await fetch(rawUrl);
+  if (!response.ok) {
+    throw new Error(`Raw shader URL returned ${response.status}.`);
+  }
+
+  const source = await response.text();
+  if (isLikelyINFINIGHTCapturePreset(source, rawUrl)) {
+    return parseINFINIGHTCaptureShaderPreset(source, rawUrl);
+  }
+  if (!source.includes("mainImage")) {
+    throw new Error("Raw shader URLs need a mainImage fragment or an .infinightcaptureshader preset.");
+  }
+
+  return {
+    author: "",
+    fragment: source,
+    label: inferShaderLabelFromUrl(rawUrl),
+    license: "Raw URL import",
+    source: "raw" as const,
+    sourceUrl: rawUrl
+  };
+};
+
 const getHandedness = (result: unknown, index: number): Handedness => {
   const handednesses = (result as { handednesses?: Array<Array<{ categoryName?: string }>> }).handednesses;
   const name = handednesses?.[index]?.[0]?.categoryName;
@@ -180,7 +451,7 @@ const getCaptureError = (error: unknown) => {
   if (isCameraBlockedError(error)) {
     return {
       issue: "blocked" as CameraIssue,
-      message: "Camera access is blocked for FaceViz."
+      message: "Camera access is blocked for INFINIGHTCapture."
     };
   }
 
@@ -222,6 +493,7 @@ export function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const outputCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const shaderFileInputRef = useRef<HTMLInputElement | null>(null);
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
@@ -259,7 +531,7 @@ export function App() {
   const [latency, setLatency] = useState(0);
   const [mode, setMode] = useState<"upper" | "full">("upper");
   const [showRig, setShowRig] = useState(true);
-  const [showRigInOutput, setShowRigInOutput] = useState(true);
+  const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
   const [selectedEffect, setSelectedEffect] = useState("auto");
@@ -286,8 +558,13 @@ export function App() {
   const [shaderImportName, setShaderImportName] = useState("Imported Shader");
   const [shaderImportAuthor, setShaderImportAuthor] = useState("");
   const [shaderImportLicense, setShaderImportLicense] = useState("");
+  const [shaderImportLink, setShaderImportLink] = useState("");
   const [shaderImportSource, setShaderImportSource] = useState(defaultShaderImportSource);
   const [shaderImportError, setShaderImportError] = useState("");
+  const [shaderImportNotice, setShaderImportNotice] = useState("");
+  const [shaderImportBusy, setShaderImportBusy] = useState(false);
+  const [shaderFileDragActive, setShaderFileDragActive] = useState(false);
+  const [showShaderCodeImport, setShowShaderCodeImport] = useState(false);
   const outputStatuses = useMemo(() => getOutputStatuses(), []);
   const displayOutputStatuses = outputStatuses.map((status) => {
     const systemOutput = systemStatus?.outputs.find((output) => output.target === status.target);
@@ -302,6 +579,9 @@ export function App() {
   const selectedPerformanceMode =
     outputPerformanceModes.find((performanceMode) => performanceMode.id === outputPerformanceMode) ??
     outputPerformanceModes[0];
+  const selectedOutputComposition =
+    outputCompositionModes.find((compositionMode) => compositionMode.id === outputCompositionMode) ??
+    outputCompositionModes[0];
   const shaderLibrary = useMemo(() => [...shaderScenes, ...importedShaderScenes], [importedShaderScenes]);
   const activeShaderScene = useMemo(() => getShaderSceneFromLibrary(shaderSceneId, shaderLibrary), [shaderLibrary, shaderSceneId]);
   const shaderValues = useMemo(
@@ -469,7 +749,7 @@ export function App() {
 
       const systemCameraAccess = await requestSystemCameraAccess();
       if (!systemCameraAccess.granted) {
-        const error = new DOMException("Camera access is blocked for FaceViz.", "NotAllowedError");
+        const error = new DOMException("Camera access is blocked for INFINIGHTCapture.", "NotAllowedError");
         throw error;
       }
       setSystemStatus((current) => (current ? { ...current, cameraAccess: systemCameraAccess.status } : current));
@@ -587,14 +867,25 @@ export function App() {
       shaderParameters: shaderSettings
     };
     outputCompositorOptionsRef.current = {
-      showRig: showRigInOutput,
+      showRig: selectedOutputComposition.showRig,
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
       selectedEffect,
-      visualMode,
+      includeCameraFeed: selectedOutputComposition.includeCameraFeed,
+      visualMode: "shader",
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings
     };
-  }, [activeShaderScene, effectAmount, reducedMotion, selectedEffect, shaderSettings, showRig, showRigInOutput, visualMode]);
+  }, [
+    activeShaderScene,
+    effectAmount,
+    reducedMotion,
+    selectedEffect,
+    selectedOutputComposition.includeCameraFeed,
+    selectedOutputComposition.showRig,
+    shaderSettings,
+    showRig,
+    visualMode
+  ]);
 
   useEffect(() => {
     setShaderSettings((current) => {
@@ -618,8 +909,29 @@ export function App() {
     }));
   }, []);
 
+  const addImportedShaderScene = useCallback((input: {
+    author?: string;
+    fragment: string;
+    label: string;
+    license?: string;
+    mappings?: Record<string, ShaderParameterSettings>;
+    parameters?: ShaderParameterDefinition[];
+    source?: "file" | "preset" | "raw" | "shadertoy";
+    sourceUrl?: string;
+  }) => {
+    const nextScene = createImportedShaderScene(input);
+    const nextSettings = normalizeShaderSettings(nextScene, input.mappings);
+    setImportedShaderScenes((current) => [...current, nextScene]);
+    setShaderSceneId(nextScene.id);
+    setShaderSettings(nextSettings);
+    setVisualMode("shader");
+    setActiveWorkspace("shader");
+    return nextScene;
+  }, []);
+
   const importShaderScene = useCallback(() => {
     setShaderImportError("");
+    setShaderImportNotice("");
     if (!shaderImportName.trim()) {
       setShaderImportError("Name required.");
       return;
@@ -629,19 +941,127 @@ export function App() {
       return;
     }
 
-    const nextScene = createImportedShaderScene({
+    addImportedShaderScene({
       author: shaderImportAuthor,
       fragment: shaderImportSource,
       label: shaderImportName,
-      license: shaderImportLicense
+      license: shaderImportLicense,
+      sourceUrl: shaderImportLink
     });
+    setShaderImportNotice("Shader added.");
+  }, [addImportedShaderScene, shaderImportAuthor, shaderImportLicense, shaderImportLink, shaderImportName, shaderImportSource]);
 
-    setImportedShaderScenes((current) => [...current, nextScene]);
-    setShaderSceneId(nextScene.id);
-    setShaderSettings(createDefaultShaderSettings(nextScene));
-    setVisualMode("shader");
-    setActiveWorkspace("shader");
-  }, [shaderImportAuthor, shaderImportLicense, shaderImportName, shaderImportSource]);
+  const importShaderLink = useCallback(async () => {
+    setShaderImportError("");
+    setShaderImportNotice("");
+    setShaderImportBusy(true);
+    try {
+      const trimmedLink = shaderImportLink.trim();
+      const isShadertoy =
+        /^[a-zA-Z0-9]{6,12}$/.test(trimmedLink) || /^https?:\/\/(?:www\.)?shadertoy\.com\//i.test(trimmedLink);
+      const fetched = isShadertoy ? await fetchShadertoyImport(trimmedLink) : await fetchRawShaderImport(trimmedLink);
+      setShaderImportName(fetched.label);
+      setShaderImportAuthor("author" in fetched ? fetched.author : "");
+      setShaderImportLicense(fetched.license);
+      setShaderImportSource(fetched.fragment);
+      addImportedShaderScene(fetched);
+      setShaderImportNotice(isShadertoy ? "Shader added from Shadertoy." : "Shader added from URL.");
+    } catch (nextError) {
+      setShaderImportError(nextError instanceof Error ? nextError.message : "Unable to import shader URL.");
+    } finally {
+      setShaderImportBusy(false);
+    }
+  }, [addImportedShaderScene, shaderImportLink]);
+
+  const importShaderFiles = useCallback(async (files: FileList | File[]) => {
+    const shaderFiles = Array.from(files).filter((file) =>
+      shaderSourceFilePattern.test(file.name) || /json|shader|glsl|text/i.test(file.type)
+    );
+
+    if (shaderFiles.length === 0) {
+      setShaderImportNotice("");
+      setShaderImportError("Drop a .frag, .glsl, or .infinightcaptureshader file.");
+      return;
+    }
+
+    setShaderImportError("");
+    setShaderImportNotice("");
+    setShaderImportBusy(true);
+    try {
+      let importedCount = 0;
+      for (const file of shaderFiles) {
+        const source = await file.text();
+        if (shaderPresetFilePattern.test(file.name) || isLikelyINFINIGHTCapturePreset(source, file.name)) {
+          const preset = parseINFINIGHTCaptureShaderPreset(source, file.name);
+          const scene = addImportedShaderScene(preset);
+          setShaderImportName(scene.label);
+          setShaderImportLicense(scene.license ?? "");
+          setShaderImportSource(scene.fragment);
+          importedCount += 1;
+          continue;
+        }
+
+        if (!source.includes("mainImage")) {
+          throw new Error(`${file.name} does not include mainImage.`);
+        }
+
+        const label = file.name.replace(/\.(frag|fs|glsl|txt)$/i, "").trim() || "Dropped Shader";
+        const scene = addImportedShaderScene({
+          fragment: source,
+          label,
+          license: "File import",
+          source: "file",
+          sourceUrl: file.name
+        });
+        setShaderImportName(scene.label);
+        setShaderImportLicense(scene.license ?? "");
+        setShaderImportSource(scene.fragment);
+        importedCount += 1;
+      }
+      setShaderImportNotice(importedCount > 1 ? `Imported ${importedCount} shaders.` : "Shader file imported.");
+    } catch (nextError) {
+      setShaderImportNotice("");
+      setShaderImportError(nextError instanceof Error ? nextError.message : "Unable to import shader file.");
+    } finally {
+      setShaderImportBusy(false);
+      setShaderFileDragActive(false);
+    }
+  }, [addImportedShaderScene]);
+
+  const exportActiveShaderPreset = useCallback(() => {
+    const defaults = createDefaultShaderSettings(activeShaderScene);
+    const mappings = Object.fromEntries(
+      activeShaderScene.parameters.map((parameter) => [
+        parameter.id,
+        shaderSettings[parameter.id] ?? defaults[parameter.id]
+      ])
+    );
+    const preset: INFINIGHTCaptureShaderPreset = {
+      schema: FACEVIZ_SHADER_PRESET_SCHEMA,
+      name: activeShaderScene.label,
+      fragment: activeShaderScene.fragment,
+      author: activeShaderScene.author,
+      license: activeShaderScene.license,
+      source: activeShaderScene.source,
+      sourceUrl: activeShaderScene.sourceUrl,
+      parameters: activeShaderScene.parameters,
+      mappings
+    };
+    const filename = `${activeShaderScene.label
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "infinightcapture-shader"}.infinightcaptureshader`;
+    const blob = new Blob([JSON.stringify(preset, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(url);
+    setShaderImportError("");
+    setShaderImportNotice("Preset exported.");
+  }, [activeShaderScene, shaderSettings]);
 
   const deleteShaderScene = useCallback((sceneId: string) => {
     setImportedShaderScenes((current) => current.filter((scene) => scene.id !== sceneId));
@@ -657,7 +1077,7 @@ export function App() {
     if (tab === "preview") {
       setVisualMode("camera");
     }
-    if (tab === "shader") {
+    if (tab === "shader" || tab === "mapping") {
       setVisualMode("shader");
     }
   }, []);
@@ -692,7 +1112,8 @@ export function App() {
       <canvas
         ref={outputCanvasRef}
         className="output-canvas"
-        style={{ width: selectedPerformanceMode.width, height: selectedPerformanceMode.height }}
+        width={selectedPerformanceMode.width}
+        height={selectedPerformanceMode.height}
         aria-hidden="true"
       />
 
@@ -703,7 +1124,7 @@ export function App() {
               <ScanFace size={22} />
             </div>
             <div>
-              <p className="eyebrow">FaceViz</p>
+              <p className="eyebrow brand-name">INFINIGHTCapture</p>
               <h1>Gesture Mocap Sender</h1>
             </div>
           </div>
@@ -723,17 +1144,20 @@ export function App() {
         </header>
 
         <nav className="workspace-tabs" aria-label="Workspace tabs">
-          {workspaceTabs.map((tab) => (
-            <button
-              key={tab.id}
-              className={activeWorkspace === tab.id ? "workspace-tab active" : "workspace-tab"}
-              onClick={() => selectWorkspace(tab.id)}
-              type="button"
-            >
-              {tab.id === "preview" ? <ScanFace size={15} /> : tab.id === "shader" ? <Sparkles size={15} /> : <Activity size={15} />}
-              <span>{tab.label}</span>
-            </button>
-          ))}
+          {workspaceTabs.map((tab) => {
+            const TabIcon = workspaceTabIcons[tab.id];
+            return (
+              <button
+                key={tab.id}
+                className={activeWorkspace === tab.id ? "workspace-tab active" : "workspace-tab"}
+                onClick={() => selectWorkspace(tab.id)}
+                type="button"
+              >
+                <TabIcon size={15} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </nav>
 
         <section
@@ -750,7 +1174,7 @@ export function App() {
               <strong>{visualMode === "shader" ? "Mocap Shader" : mode === "upper" ? "Upper Body" : "Full Body"}</strong>
             </div>
           </div>
-          <canvas ref={canvasRef} className="preview-canvas" aria-label="FaceViz composited preview" />
+          <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
           {visualMode === "camera" && captureState !== "running" && (
             <EmptyState captureState={captureState} cameraIssue={cameraIssue} />
           )}
@@ -784,8 +1208,8 @@ export function App() {
                 {cameraIssue === "blocked" && (
                   <ol>
                     <li>Reset camera permission for 127.0.0.1:5173 in the browser controls.</li>
-                    <li>Reload FaceViz, then press Start again.</li>
-                    <li>For the desktop shell, allow camera access for Electron or FaceViz in macOS settings.</li>
+                    <li>Reload INFINIGHTCapture, then press Start again.</li>
+                    <li>For the desktop shell, allow camera access for Electron or INFINIGHTCapture in macOS settings.</li>
                   </ol>
                 )}
               </div>
@@ -799,6 +1223,38 @@ export function App() {
               <Metric icon={Expand} label="Landmarks" value={`${motion?.landmarkCount ?? 0}`} />
               <Metric icon={Fingerprint} label="Intent" value={motion?.dominantIntent ?? "Neutral stance"} />
             </section>
+
+            {activeWorkspace === "mapping" && (
+              <section className="mapping-workspace" aria-label="Motion parameter mapping">
+                <div className="mapping-header">
+                  <div>
+                    <p className="eyebrow">Mocap Mapping</p>
+                    <h2>{activeShaderScene.label}</h2>
+                  </div>
+                  <div className="mapping-summary">
+                    <span>{activeShaderScene.parameters.length} parameters</span>
+                    <strong>{activeShaderScene.imported ? "Imported" : "Built-in"}</strong>
+                  </div>
+                </div>
+                <div className="mapping-signal-strip" aria-label="Live motion signals">
+                  {shaderMotionSources
+                    .filter((source) => source.id !== "manual")
+                    .map((source) => (
+                      <div className="mapping-signal" key={source.id}>
+                        <span>{source.label}</span>
+                        <strong>{getMotionSignalValue(source.id, motion).toFixed(2)}</strong>
+                      </div>
+                    ))}
+                </div>
+                <ShaderParameterMapper
+                  motion={motion}
+                  onUpdate={updateShaderSetting}
+                  scene={activeShaderScene}
+                  settings={shaderSettings}
+                  shaderValues={shaderValues}
+                />
+              </section>
+            )}
           </>
         ) : (
           <SignalGraph
@@ -844,14 +1300,23 @@ export function App() {
               Start Syphon Output
             </button>
           )}
-          <label className="toggle-row">
-            <span>Wireframe in Syphon</span>
-            <input
-              type="checkbox"
-              checked={showRigInOutput}
-              onChange={(event) => setShowRigInOutput(event.target.checked)}
-            />
-          </label>
+          <div className="output-composition-options" role="group" aria-label="Syphon output composition">
+            {outputCompositionModes.map((compositionMode) => (
+              <button
+                key={compositionMode.id}
+                className={
+                  compositionMode.id === outputCompositionMode
+                    ? "output-composition-option active"
+                    : "output-composition-option"
+                }
+                onClick={() => setOutputCompositionMode(compositionMode.id)}
+                type="button"
+              >
+                <strong>{compositionMode.label}</strong>
+                <span>{compositionMode.detail}</span>
+              </button>
+            ))}
+          </div>
           <div className="performance-control">
             <div className="performance-options" role="group" aria-label="Syphon speed">
               {outputPerformanceModes.map((performanceMode) => (
@@ -902,7 +1367,7 @@ export function App() {
                   onClick={() => {
                     setShaderSceneId(scene.id);
                     setVisualMode("shader");
-                    setActiveWorkspace("shader");
+                    setActiveWorkspace(activeWorkspace === "mapping" ? "mapping" : "shader");
                   }}
                   type="button"
                 >
@@ -924,88 +1389,118 @@ export function App() {
             ))}
           </div>
           <div className="shader-importer">
-            <div className="shader-import-grid">
-              <label>
-                <span>Name</span>
-                <input value={shaderImportName} onChange={(event) => setShaderImportName(event.target.value)} />
-              </label>
-              <label>
-                <span>Author</span>
-                <input value={shaderImportAuthor} onChange={(event) => setShaderImportAuthor(event.target.value)} />
-              </label>
+            <div className="api-credit">
+              <Link2 size={14} />
+              <span>Uses Shadertoy.com API</span>
             </div>
-            <label className="shader-import-license">
-              <span>License</span>
-              <input value={shaderImportLicense} onChange={(event) => setShaderImportLicense(event.target.value)} />
-            </label>
-            <label className="shader-source-control">
-              <span>mainImage</span>
-              <textarea
-                spellCheck={false}
-                value={shaderImportSource}
-                onChange={(event) => setShaderImportSource(event.target.value)}
+            <button
+              className={shaderFileDragActive ? "shader-drop-zone active" : "shader-drop-zone"}
+              onClick={() => shaderFileInputRef.current?.click()}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setShaderFileDragActive(true);
+              }}
+              onDragLeave={(event) => {
+                event.preventDefault();
+                setShaderFileDragActive(false);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setShaderFileDragActive(true);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                importShaderFiles(event.dataTransfer.files);
+              }}
+              type="button"
+            >
+              <FileUp size={18} />
+              <strong>Drop Shader Or Preset</strong>
+              <span>.frag, .glsl, .infinightcaptureshader</span>
+            </button>
+            <input
+              ref={shaderFileInputRef}
+              accept=".infinightcaptureshader,.facevizshader,.frag,.fs,.glsl,.json,.txt,application/json,text/plain"
+              className="shader-file-input"
+              onChange={(event) => {
+                if (event.target.files) {
+                  importShaderFiles(event.target.files);
+                }
+                event.target.value = "";
+              }}
+              type="file"
+              multiple
+            />
+            <label className="shader-link-control">
+              <span>Shader URL</span>
+              <input
+                value={shaderImportLink}
+                onChange={(event) => setShaderImportLink(event.target.value)}
+                placeholder="Shadertoy, GitHub, Gist, or raw GLSL URL"
               />
             </label>
-            <button className="shader-import-button" onClick={importShaderScene} type="button">
-              <Code2 size={16} />
-              Load Shader
+            <button
+              className="shader-import-button"
+              onClick={importShaderLink}
+              type="button"
+              disabled={shaderImportBusy || !shaderImportLink.trim()}
+            >
+              {shaderImportBusy ? <Loader2 size={16} className="spin" /> : <Link2 size={16} />}
+              Add From URL
             </button>
-            {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
-          </div>
-          <div className="shader-param-stack">
-            {activeShaderScene.parameters.map((parameter, index) => {
-              const setting = shaderSettings[parameter.id] ?? {
-                value: parameter.defaultValue,
-                source: parameter.motionDefault,
-                depth: 0
-              };
-              const signalValue = getMotionSignalValue(setting.source, motion);
-              return (
-                <div className="shader-param" key={parameter.id}>
-                  <div className="shader-param-header">
-                    <span>{parameter.label}</span>
-                    <strong>{shaderValues[index].toFixed(2)}</strong>
-                  </div>
-                  <input
-                    type="range"
-                    min={parameter.min}
-                    max={parameter.max}
-                    step="0.01"
-                    value={setting.value}
-                    onChange={(event) => updateShaderSetting(parameter.id, { value: Number(event.target.value) })}
-                    aria-label={`${parameter.label} base value`}
-                  />
-                  <div className="shader-map-row">
-                    <select
-                      value={setting.source}
-                      onChange={(event) =>
-                        updateShaderSetting(parameter.id, { source: event.target.value as ShaderParameterSettings["source"] })
-                      }
-                      aria-label={`${parameter.label} motion source`}
-                    >
-                      {shaderMotionSources.map((source) => (
-                        <option key={source.id} value={source.id}>
-                          {source.label}
-                        </option>
-                      ))}
-                    </select>
-                    <span>{signalValue.toFixed(2)}</span>
-                  </div>
-                  <label className="shader-depth">
-                    <span>Depth</span>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={setting.depth}
-                      onChange={(event) => updateShaderSetting(parameter.id, { depth: Number(event.target.value) })}
-                    />
+            <button className="shader-import-button secondary" onClick={exportActiveShaderPreset} type="button">
+              <Download size={16} />
+              Export Active Preset
+            </button>
+            <button
+              className="shader-advanced-toggle"
+              onClick={() => setShowShaderCodeImport((current) => !current)}
+              type="button"
+            >
+              <ChevronsUpDown size={15} />
+              <span>Advanced</span>
+            </button>
+            {showShaderCodeImport && (
+              <div className="shader-code-import-panel">
+                <div className="shader-import-grid">
+                  <label>
+                    <span>Name</span>
+                    <input value={shaderImportName} onChange={(event) => setShaderImportName(event.target.value)} />
+                  </label>
+                  <label>
+                    <span>Author</span>
+                    <input value={shaderImportAuthor} onChange={(event) => setShaderImportAuthor(event.target.value)} />
                   </label>
                 </div>
-              );
-            })}
+                <label className="shader-import-license">
+                  <span>License</span>
+                  <input value={shaderImportLicense} onChange={(event) => setShaderImportLicense(event.target.value)} />
+                </label>
+                <label className="shader-source-control">
+                  <span>mainImage</span>
+                  <textarea
+                    spellCheck={false}
+                    value={shaderImportSource}
+                    onChange={(event) => setShaderImportSource(event.target.value)}
+                  />
+                </label>
+                <button className="shader-import-button" onClick={importShaderScene} type="button">
+                  <Code2 size={16} />
+                  Add From Code
+                </button>
+              </div>
+            )}
+            {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
+            {shaderImportNotice && <div className="shader-import-notice">{shaderImportNotice}</div>}
           </div>
+          <ShaderParameterMapper
+            compact
+            motion={motion}
+            onUpdate={updateShaderSetting}
+            scene={activeShaderScene}
+            settings={shaderSettings}
+            shaderValues={shaderValues}
+          />
         </section>
 
         <section className="rail-section">
@@ -1106,10 +1601,10 @@ function SignalGraph({
   const consumerLabel = primaryConsumer?.appName ?? (syphon?.hasOutputClients ? "Syphon Client" : "Resolume / VJ App");
   const consumerDetail =
     primaryConsumer?.detail ??
-    (isOutputStreaming ? "FaceViz Output is visible on the Syphon bus." : "Waiting for FaceViz Output.");
+    (isOutputStreaming ? "INFINIGHTCapture Output is visible on the Syphon bus." : "Waiting for INFINIGHTCapture Output.");
   const outputState = selectedSystemOutput?.state ?? (isOutputStreaming ? "publishing" : "bridge-ready");
-  const outputName = syphon?.outputName ?? "FaceViz Output";
-  const inputName = syphon?.inputName ?? "FaceViz Input";
+  const outputName = syphon?.outputName ?? "INFINIGHTCapture Output";
+  const inputName = syphon?.inputName ?? "INFINIGHTCapture Input";
   const signalTokens = [
     `${Math.round((motion?.confidence ?? 0) * 100)}% confidence`,
     `${motion?.hands.length ?? 0}/2 hands`,
@@ -1223,7 +1718,7 @@ function SignalGraph({
           className="node-core"
           id="core"
           detail={signalTokens.join("  /  ")}
-          eyebrow="FaceViz"
+          eyebrow="INFINIGHTCapture"
           label="Gesture Core"
           onPointerDown={startNodeDrag}
           onPointerMove={moveNode}
@@ -1280,6 +1775,83 @@ function SignalGraph({
         <GraphStatusRow label="Input source" value={formatPeerList(inputSources)} />
       </div>
     </section>
+  );
+}
+
+type ShaderParameterMapperProps = {
+  compact?: boolean;
+  motion: MotionFrame | null;
+  onUpdate: (parameterId: string, patch: Partial<ShaderParameterSettings>) => void;
+  scene: ShaderScene;
+  settings: Record<string, ShaderParameterSettings>;
+  shaderValues: number[];
+};
+
+function ShaderParameterMapper({
+  compact = false,
+  motion,
+  onUpdate,
+  scene,
+  settings,
+  shaderValues
+}: ShaderParameterMapperProps) {
+  return (
+    <div className={compact ? "shader-param-stack" : "mapping-param-grid"}>
+      {scene.parameters.map((parameter, index) => {
+        const setting = settings[parameter.id] ?? {
+          value: parameter.defaultValue,
+          source: parameter.motionDefault,
+          depth: 0
+        };
+        const signalValue = getMotionSignalValue(setting.source, motion);
+
+        return (
+          <div className={compact ? "shader-param" : "shader-param mapping-param"} key={parameter.id}>
+            <div className="shader-param-header">
+              <span>{parameter.label}</span>
+              <strong>{shaderValues[index].toFixed(2)}</strong>
+            </div>
+            <label className="mapping-base">
+              <span>Base</span>
+              <input
+                type="range"
+                min={parameter.min}
+                max={parameter.max}
+                step="0.01"
+                value={setting.value}
+                onChange={(event) => onUpdate(parameter.id, { value: Number(event.target.value) })}
+                aria-label={`${parameter.label} base value`}
+              />
+            </label>
+            <div className="shader-map-row">
+              <select
+                value={setting.source}
+                onChange={(event) => onUpdate(parameter.id, { source: event.target.value as ShaderParameterSettings["source"] })}
+                aria-label={`${parameter.label} motion source`}
+              >
+                {shaderMotionSources.map((source) => (
+                  <option key={source.id} value={source.id}>
+                    {source.label}
+                  </option>
+                ))}
+              </select>
+              <span>{signalValue.toFixed(2)}</span>
+            </div>
+            <label className="shader-depth">
+              <span>Depth</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={setting.depth}
+                onChange={(event) => onUpdate(parameter.id, { depth: Number(event.target.value) })}
+              />
+            </label>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

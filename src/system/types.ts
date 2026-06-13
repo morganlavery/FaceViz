@@ -47,7 +47,7 @@ export type CameraAccessResult = {
   status: SystemStatus["cameraAccess"];
 };
 
-export type FaceVizSystemBridge = {
+export type INFINIGHTCaptureSystemBridge = {
   getStatus: () => Promise<SystemStatus>;
   requestCameraAccess: () => Promise<CameraAccessResult>;
   startOutput: (target: OutputTarget) => Promise<{ ok: boolean; target: OutputTarget; reason?: string }>;

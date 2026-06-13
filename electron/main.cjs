@@ -35,7 +35,7 @@ const createWindow = () => {
     height: 860,
     minWidth: 980,
     minHeight: 700,
-    title: "FaceViz",
+    title: "INFINIGHTCapture",
     backgroundColor: "#060908",
     webPreferences: {
       contextIsolation: true,
@@ -63,7 +63,11 @@ const createWindow = () => {
   });
 
   const shouldLoadBuiltApp =
-    app.isPackaged || process.env.FACEVIZ_LOAD_DIST === "1" || process.argv.includes("--faceviz-load-dist");
+    app.isPackaged ||
+    process.env.INFINIGHTCAPTURE_LOAD_DIST === "1" ||
+    process.env.FACEVIZ_LOAD_DIST === "1" ||
+    process.argv.includes("--infinightcapture-load-dist") ||
+    process.argv.includes("--faceviz-load-dist");
   if (!shouldLoadBuiltApp) {
     const devUrl = process.env.VITE_DEV_SERVER_URL || "http://127.0.0.1:5173";
     win.loadURL(devUrl);

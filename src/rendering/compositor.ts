@@ -47,6 +47,7 @@ export type CompositorOptions = {
   showRig: boolean;
   effectAmount: number;
   selectedEffect: string;
+  includeCameraFeed?: boolean;
   visualMode?: "camera" | "shader";
   shaderScene?: ShaderScene;
   shaderParameters?: Record<string, ShaderParameterSettings>;
@@ -1320,9 +1321,27 @@ const drawShaderUnavailable = (ctx: CanvasRenderingContext2D, width: number, hei
   ctx.restore();
 };
 
+const drawMirroredVideo = (ctx: CanvasRenderingContext2D, video: HTMLVideoElement, width: number, height: number) => {
+  ctx.save();
+  ctx.translate(width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, width, height);
+  ctx.restore();
+};
+
 const resizeCanvas = (canvas: HTMLCanvasElement) => {
+  if (canvas.classList.contains("output-canvas")) {
+    const width = Math.max(2, Number(canvas.getAttribute("width")) || canvas.width);
+    const height = Math.max(2, Number(canvas.getAttribute("height")) || canvas.height);
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    return;
+  }
+
   const rect = canvas.getBoundingClientRect();
-  const ratio = canvas.classList.contains("output-canvas") ? 1 : window.devicePixelRatio || 1;
+  const ratio = window.devicePixelRatio || 1;
   const width = Math.max(2, Math.floor(rect.width * ratio));
   const height = Math.max(2, Math.floor(rect.height * ratio));
   if (canvas.width !== width || canvas.height !== height) {
@@ -1346,6 +1365,14 @@ export const renderFrame = (
   ctx.clearRect(0, 0, width, height);
 
   if (options.visualMode === "shader" && options.shaderScene && options.shaderParameters) {
+    const hasVideo = Boolean(video?.videoWidth && video.videoHeight);
+    if (options.includeCameraFeed && video && hasVideo) {
+      drawMirroredVideo(ctx, video, width, height);
+      ctx.save();
+      ctx.globalAlpha = 0.78;
+      ctx.globalCompositeOperation = "screen";
+    }
+
     try {
       motionShaderPlayer ??= new MotionShaderPlayer();
       const shaderValues = resolveShaderParameterValues(options.shaderScene, options.shaderParameters, motion);
@@ -1356,13 +1383,13 @@ export const renderFrame = (
     } catch (error) {
       console.warn(error);
       drawShaderUnavailable(ctx, width, height);
+    } finally {
+      if (options.includeCameraFeed && video && hasVideo) {
+        ctx.restore();
+      }
     }
   } else if (video?.videoWidth && video.videoHeight) {
-    ctx.save();
-    ctx.translate(width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0, width, height);
-    ctx.restore();
+    drawMirroredVideo(ctx, video, width, height);
   } else {
     drawIdleStage(ctx, width, height);
   }

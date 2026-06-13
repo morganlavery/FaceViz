@@ -1,5 +1,5 @@
 {
-  "name": "faceviz",
+  "name": "infinightcapture",
   "version": "0.1.0",
   "private": true,
   "description": "Gesture-reactive webcam mocap compositor with Syphon and Spout output targets.",
@@ -8,11 +8,11 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
-    "electron:preview": "electron . --faceviz-load-dist",
+    "electron:preview": "electron . --infinightcapture-load-dist",
     "launch": "npm run build && npm run electron:preview",
     "native:build": "native/build-syphon-helper.sh",
     "build": "tsc && vite build",
-    "package:mac": "npm run native:build && npm run build && electron-packager . FaceViz --platform=darwin --arch=arm64 --out=release --overwrite --prune=true --extend-info=electron/Info.plist --extra-resource=native/build/SyphonFramePublisher --ignore='^/(release|src|native)(/|$)'",
+    "package:mac": "npm run native:build && npm run build && electron-packager . INFINIGHTCapture --platform=darwin --arch=arm64 --out=release --overwrite --prune=true --extend-info=electron/Info.plist --extra-resource=native/build/SyphonFramePublisher --ignore='^/(release|src|native)(/|$)'",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {

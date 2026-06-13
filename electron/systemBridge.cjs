@@ -49,7 +49,7 @@ const getRunningSyphonConsumers = () => {
     .map((consumer) => consumer.appName);
 };
 
-const syphonPeer = ({ appName, status, source, detail, serverName = "FaceViz Output" }) => ({
+const syphonPeer = ({ appName, status, source, detail, serverName = "INFINIGHTCapture Output" }) => ({
   id: `${appName}:${serverName}:${status}`,
   appName,
   serverName,
@@ -80,7 +80,7 @@ const getSyphonStatus = () => {
           appName: "Unknown Syphon client",
           status: "connected",
           source: "native",
-          detail: "Syphon reports a client attached to FaceViz Output."
+          detail: "Syphon reports a client attached to INFINIGHTCapture Output."
         })
       );
     }
@@ -91,23 +91,23 @@ const getSyphonStatus = () => {
           appName,
           status: "watching",
           source: "inferred",
-          detail: "App is running; no attached FaceViz Output client reported yet."
+          detail: "App is running; no attached INFINIGHTCapture Output client reported yet."
         })
       )
     );
   }
 
   return {
-    outputName: "FaceViz Output",
-    inputName: "FaceViz Input",
+    outputName: "INFINIGHTCapture Output",
+    inputName: "INFINIGHTCapture Input",
     hasOutputClients: syphonHasClients,
     outputConsumers,
     inputSources: [],
     detail: isSyphonRunning()
       ? syphonHasClients
-        ? "FaceViz Output has at least one attached Syphon client."
-        : "FaceViz Output is publishing and waiting for a Syphon client."
-      : "Start Syphon Output to publish FaceViz Output.",
+        ? "INFINIGHTCapture Output has at least one attached Syphon client."
+        : "INFINIGHTCapture Output is publishing and waiting for a Syphon client."
+      : "Start Syphon Output to publish INFINIGHTCapture Output.",
     updatedAt: syphonClientSignalAt || Date.now()
   };
 };
@@ -134,8 +134,8 @@ const outputStatusForPlatform = () => {
       detail:
         platform === "darwin"
           ? isSyphonRunning()
-            ? "Publishing as FaceViz Output"
-            : "Ready to publish FaceViz Output"
+            ? "Publishing as INFINIGHTCapture Output"
+            : "Ready to publish INFINIGHTCapture Output"
           : "Syphon is macOS-only"
     },
     {
@@ -236,7 +236,7 @@ const startSyphonOutput = () => {
     stdio: ["pipe", "ignore", "pipe"],
     env: {
       ...process.env,
-      FACEVIZ_SYPHON_NAME: "FaceViz Output"
+      INFINIGHTCAPTURE_SYPHON_NAME: "INFINIGHTCapture Output"
     }
   });
   logNativeOutput(`[pid] ${syphonProcess.pid}`);
@@ -348,15 +348,15 @@ const publishSyphonFrame = (frame) => {
 };
 
 const registerSystemBridge = () => {
-  ipcMain.handle("faceviz:system-status", () => getSystemStatus());
-  ipcMain.handle("faceviz:request-camera-access", () => requestCameraAccess());
-  ipcMain.handle("faceviz:output-start", (_event, target) =>
+  ipcMain.handle("infinightcapture:system-status", () => getSystemStatus());
+  ipcMain.handle("infinightcapture:request-camera-access", () => requestCameraAccess());
+  ipcMain.handle("infinightcapture:output-start", (_event, target) =>
     target === "syphon" ? startSyphonOutput() : { ok: false, target, reason: "Spout is not implemented yet." }
   );
-  ipcMain.handle("faceviz:output-stop", (_event, target) =>
+  ipcMain.handle("infinightcapture:output-stop", (_event, target) =>
     target === "syphon" ? stopSyphonOutput() : { ok: true, target }
   );
-  ipcMain.handle("faceviz:output-frame", (_event, target, frame) =>
+  ipcMain.handle("infinightcapture:output-frame", (_event, target, frame) =>
     target === "syphon" ? publishSyphonFrame(frame) : { ok: false, target, reason: "Spout is not implemented yet." }
   );
 };
