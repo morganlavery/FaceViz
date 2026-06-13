@@ -1026,6 +1026,136 @@ body.layout-resizing-stage * {
   gap: 8px;
 }
 
+.visual-drum-pad-editor {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 8px;
+  background: rgba(4, 16, 24, 0.62);
+}
+
+.visual-drum-pad-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.visual-drum-pad-toolbar h3 {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 1rem;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visual-drum-pad-toolbar button {
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  border-radius: 8px;
+  color: var(--text);
+  background: rgba(6, 18, 23, 0.72);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.visual-drum-pad-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 8px;
+}
+
+.visual-drum-pad-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(5, 25, 29, 0.84), rgba(21, 20, 37, 0.72));
+}
+
+.visual-drum-pad-card.muted {
+  opacity: 0.58;
+}
+
+.visual-drum-pad-card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.visual-drum-pad-card-header label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.visual-drum-pad-card-header input {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
+
+.visual-drum-pad-card-header span,
+.visual-drum-pad-card-header strong,
+.visual-drum-pad-target span,
+.visual-drum-pad-range span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.visual-drum-pad-card-header strong,
+.visual-drum-pad-range strong {
+  color: var(--accent-soft);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.visual-drum-pad-target,
+.visual-drum-pad-range {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.visual-drum-pad-target select {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 8px;
+  color: var(--text);
+  background: #041018;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.visual-drum-pad-range {
+  grid-template-columns: 34px minmax(0, 1fr) 42px;
+  align-items: center;
+}
+
+.visual-drum-pad-range input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
 .gesture-action-matrix {
   display: grid;
   gap: 10px;
