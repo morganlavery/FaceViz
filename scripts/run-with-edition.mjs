@@ -7,13 +7,14 @@ if (!["demo", "paid"].includes(edition) || !command) {
   process.exit(1);
 }
 
-const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
+const isWindows = process.platform === "win32";
+const executable = isWindows && command === "npm" ? "npm" : command;
 const env = {
   ...process.env,
   VITE_INFINIGHT_EDITION: edition
 };
 
-if (process.platform === "win32") {
+if (isWindows) {
   for (const key of Object.keys(env)) {
     if (!key || key.startsWith("=")) {
       delete env[key];
@@ -23,7 +24,8 @@ if (process.platform === "win32") {
 
 const child = spawn(executable, args, {
   env,
-  stdio: "inherit"
+  stdio: "inherit",
+  shell: isWindows
 });
 
 child.on("exit", (code, signal) => {
