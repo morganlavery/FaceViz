@@ -72,19 +72,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $release = Invoke-RestMethod `
-            -Headers @{ "User-Agent" = "infinightcapture-ci" } `
-            -Uri "https://api.github.com/repos/leadedge/Spout2/releases/tags/2.007.017"
-          $asset = $release.assets |
-            Where-Object { $_.name -eq "Spout-SDK-binaries_2-007-017_1.zip" } |
-            Select-Object -First 1
-          if (-not $asset) {
-            throw "Spout-SDK-binaries_2-007-017_1.zip was not found in the Spout 2.007.017 release."
-          }
-
+          $zipUrl = "https://github.com/leadedge/Spout2/releases/download/2.007.017/Spout-SDK-binaries_2-007-017_1.zip"
           $zipPath = Join-Path $env:RUNNER_TEMP "spout-sdk-binaries.zip"
           $extractPath = Join-Path $env:RUNNER_TEMP "spout-sdk-binaries"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zipPath
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
           Expand-Archive -Force -Path $zipPath -DestinationPath $extractPath
 
           $dll = Get-ChildItem -Path $extractPath -Recurse -Filter "SpoutLibrary.dll" |
