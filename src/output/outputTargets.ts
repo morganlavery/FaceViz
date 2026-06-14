@@ -1,9 +1,9 @@
-export type OutputTarget = "syphon" | "spout";
+export type OutputTarget = "syphon" | "spout" | "ndi";
 
 export type OutputStatus = {
   target: OutputTarget;
   available: boolean;
-  label: string;
+  label: "Syphon" | "Spout" | "NDI";
   detail: string;
 };
 
@@ -22,6 +22,12 @@ export const getOutputStatuses = (): OutputStatus[] => [
     available: isWindows,
     label: "Spout",
     detail: isWindows ? "Native sender scaffold ready" : "Available in Windows builds"
+  },
+  {
+    target: "ndi",
+    available: true,
+    label: "NDI",
+    detail: "Cross-platform sender runtime required"
   }
 ];
 

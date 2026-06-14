@@ -2,7 +2,7 @@
 
 Gesture-reactive webcam mocap compositor for VJ workflows.
 
-INFINIGHTCapture is being built as a standalone app that tracks upper-body pose, hands, and fingers from a webcam, turns those landmarks into gesture signals, drives real-time visual effects, and prepares a GPU output path for Syphon on macOS and Spout on Windows.
+INFINIGHTCapture is being built as a standalone app that tracks upper-body pose, hands, and fingers from a webcam, turns those landmarks into gesture signals, drives real-time visual effects, and prepares output paths for Syphon on macOS, Spout on Windows, and NDI across desktop platforms.
 
 ## Current MVP
 
@@ -11,7 +11,7 @@ INFINIGHTCapture is being built as a standalone app that tracks upper-body pose,
 - Upper-body and face tracking overlay
 - Gesture analysis for face cover, hands up, pinch, open palm, fast motion, mouth open, smile, frown, eyes closed, ear pull, and chin lift
 - Canvas compositor with fire, melt, warp, and bloom effects
-- Syphon/Spout output target UI scaffold
+- Syphon/Spout/NDI output target UI scaffold
 - Electron shell for standalone desktop packaging
 - Electron preload/main-process system bridge
 - Runtime status panel for browser preview vs desktop shell
@@ -21,7 +21,7 @@ INFINIGHTCapture is being built as a standalone app that tracks upper-body pose,
 - Face Control panel for persisted gesture threshold calibration and touch-gesture tuning
 - Gesture state machine for started, held, released, repeated, cooldown, smoothing, and latch states
 - Gesture action matrix for routing gesture events to shader parameters, camera effects, output composition, and exportable/importable matrix presets
-- Syphon/Spout output composition options for shader-only, shader plus wireframe, or shader plus wireframe plus live feed
+- Syphon/Spout/NDI output composition options for shader-only, shader plus wireframe, or shader plus wireframe plus live feed
 
 ## Run
 
@@ -58,6 +58,19 @@ npm run build
 
 ## Package
 
+### Windows Downloads From GitHub
+
+You can develop on macOS and let GitHub build the Windows package. The Windows package workflow runs on GitHub-hosted Windows, builds Spout support, runs `npm run package:win`, and uploads `INFINIGHTCapture-win32-x64.zip` as a workflow artifact.
+
+For public downloads, create and push a version tag:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow attaches the Windows zip to that GitHub Release. Windows users can download the zip from Releases; they do not need Visual Studio, Node, npm, or the Spout SDK unless they want to build from source.
+
 macOS Apple Silicon:
 
 ```bash
@@ -71,6 +84,25 @@ npm run package:win
 ```
 
 The Windows package uses `native/SpoutFramePublisher.cpp` plus the Spout2 SDK runtime. Download the Spout2 SDK binaries from the official Spout2 project and either set `SPOUT_LIBRARY_DLL` to the full path of `SpoutLibrary.dll` or place the DLL at `native/vendor/Spout2/SpoutLibrary.dll` before running `npm run native:build:win` or `npm run package:win`.
+
+Optional NDI sender:
+
+```bash
+NDI_SDK_DIR="/path/to/NDI SDK" npm run native:build:ndi
+```
+
+You can also set `NDI_INCLUDE_DIR`, `NDI_LIBRARY_PATH`, and `NDI_RUNTIME_LIBRARY` directly. The build copies `NDIFramePublisher` plus the NDI runtime library into `native/build`, where the Electron bridge will discover it.
+
+NDI packaging scripts bundle the optional helper and runtime when the SDK is available:
+
+```bash
+npm run package:mac:ndi
+npm run package:linux:ndi
+```
+
+```powershell
+npm run package:win:ndi
+```
 
 ## Character Filters And Licensing
 
@@ -98,7 +130,7 @@ webcam
   -> INFINIGHTCapture system bridge
       browser preview: UI and tracking only
       Electron shell: native permissions and output control
-      native core: Syphon/Spout frame publisher
+      native core: Syphon/Spout/NDI frame publisher
 ```
 
 The system boundary is intentionally thin:
@@ -106,7 +138,7 @@ The system boundary is intentionally thin:
 - `src/system` defines the renderer-side bridge contract.
 - `electron/preload.cjs` safely exposes the bridge to the UI.
 - `electron/systemBridge.cjs` owns OS-level status, permissions, and native output commands.
-- `native` is reserved for the Syphon/Spout frame publisher implementation.
+- `native` is reserved for the Syphon/Spout/NDI frame publisher implementation.
 
 ## Next Milestones
 

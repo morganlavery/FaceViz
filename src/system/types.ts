@@ -1,9 +1,20 @@
 import type { OutputTarget } from "../output/outputTargets";
 
+export type NativeOutputBridgeContract = {
+  protocol: "infinightcapture.raw-rgba.v1";
+  lengthPrefix: "uint32be";
+  frameHeaderBytes: 16;
+  magic: "FVZ1";
+  pixelFormat: "rgba8";
+  byteOrder: "rgba";
+  bytesPerPixel: 4;
+  orientation: "top-left";
+};
+
 export type SystemOutputStatus = {
   target: OutputTarget;
   available: boolean;
-  state: "bridge-ready" | "shell-required" | "unavailable" | "publishing" | "error";
+  state: "bridge-ready" | "shell-required" | "unavailable" | "publishing" | "error" | "missing" | "blocked";
   detail: string;
 };
 
@@ -26,6 +37,29 @@ export type SystemSyphonStatus = {
   updatedAt: number;
 };
 
+export type SystemNativeOutputStatus = {
+  target: OutputTarget;
+  label: "Syphon" | "Spout" | "NDI";
+  outputName: string;
+  inputName: string;
+  supportedPlatform: boolean;
+  bridgeAvailable: boolean;
+  helperBuilt: boolean;
+  runtimeAvailable: boolean;
+  running: boolean;
+  blocked: boolean;
+  missing: boolean;
+  state: "available" | "built" | "running" | "blocked" | "missing" | "unsupported" | "shell-required";
+  detail: string;
+  helperPath?: string;
+  runtimePath?: string;
+  lastError?: string;
+  lastFrameAt?: number;
+  updatedAt: number;
+  outputConsumers: SystemSyphonPeer[];
+  inputSources: SystemSyphonPeer[];
+};
+
 export type SystemStatus = {
   runtime: "browser" | "electron";
   appVersion?: string;
@@ -37,8 +71,10 @@ export type SystemStatus = {
     available: boolean;
     version?: number;
     framePublisher: "planned" | "active" | "unavailable";
+    outputContract: NativeOutputBridgeContract;
   };
   outputs: SystemOutputStatus[];
+  nativeOutputs: SystemNativeOutputStatus[];
   syphon?: SystemSyphonStatus;
 };
 

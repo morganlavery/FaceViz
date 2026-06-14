@@ -75,7 +75,7 @@ import {
   startSystemOutput,
   stopSystemOutput
 } from "./system/systemBridge";
-import type { SystemStatus, SystemSyphonPeer } from "./system/types";
+import type { SystemNativeOutputStatus, SystemStatus, SystemSyphonPeer } from "./system/types";
 import {
   analyzeMotion,
   buildTrackedFace,
@@ -1267,6 +1267,7 @@ export function App() {
   });
   const selectedOutput = displayOutputStatuses.find((status) => status.target === outputTarget) ?? displayOutputStatuses[0];
   const selectedSystemOutput = systemStatus?.outputs.find((status) => status.target === outputTarget);
+  const selectedNativeOutput = systemStatus?.nativeOutputs.find((status) => status.target === outputTarget);
   const selectedPerformanceMode =
     outputPerformanceModes.find((performanceMode) => performanceMode.id === outputPerformanceMode) ??
     outputPerformanceModes[0];
@@ -2820,8 +2821,8 @@ export function App() {
             motion={motion}
             outputTarget={outputTarget}
             selectedOutputLabel={selectedOutput?.label ?? "Output"}
+            selectedNativeOutput={selectedNativeOutput}
             selectedSystemOutput={selectedSystemOutput}
-            systemStatus={systemStatus}
           />
         )}
       </section>
@@ -2921,6 +2922,11 @@ export function App() {
             />
             <SystemRow label={`${selectedOutput?.label ?? "Output"} sender`} value={selectedSystemOutput?.state ?? "pending"} />
           </div>
+          <NativeOutputDiagnostics
+            output={selectedNativeOutput}
+            target={outputTarget}
+            contract={systemStatus?.nativeBridge.outputContract}
+          />
         </CollapsibleRailSection>
 
         <CollapsibleRailSection
@@ -3162,8 +3168,8 @@ type SignalGraphProps = {
   motion: MotionFrame | null;
   outputTarget: OutputTarget;
   selectedOutputLabel: string;
+  selectedNativeOutput: SystemNativeOutputStatus | undefined;
   selectedSystemOutput: SystemStatus["outputs"][number] | undefined;
-  systemStatus: SystemStatus | null;
 };
 
 type FaceCalibrationPanelProps = {
@@ -3362,8 +3368,8 @@ function SignalGraph({
   motion,
   outputTarget,
   selectedOutputLabel,
-  selectedSystemOutput,
-  systemStatus
+  selectedNativeOutput,
+  selectedSystemOutput
 }: SignalGraphProps) {
   const graphRef = useRef<HTMLDivElement | null>(null);
   const nodeElementsRef = useRef<Partial<Record<SignalNodeId, HTMLElement>>>({});
@@ -3375,22 +3381,24 @@ function SignalGraph({
   const [graphSize, setGraphSize] = useState<SignalGraphSize>(signalGraphViewBox);
   const [nodeDimensions, setNodeDimensions] = useState(signalNodeDimensions);
   const [nodePositions, setNodePositions] = useState(defaultSignalNodePositions);
-  const syphon = systemStatus?.syphon;
-  const outputConsumers = syphon?.outputConsumers ?? [];
-  const inputSources = syphon?.inputSources ?? [];
+  const outputConsumers = selectedNativeOutput?.outputConsumers ?? [];
+  const inputSources = selectedNativeOutput?.inputSources ?? [];
   const primaryConsumer = outputConsumers[0];
-  const outputBusLabel = outputTarget === "syphon" ? "Syphon" : "Spout";
-  const consumerStatus = primaryConsumer?.status ?? (syphon?.hasOutputClients ? "connected" : "inactive");
-  const consumerLabel = primaryConsumer?.appName ?? (syphon?.hasOutputClients ? `${outputBusLabel} Client` : "Resolume / VJ App");
+  const outputBusLabel = selectedOutputLabel;
+  const hasOutputClients = outputConsumers.some((consumer) => consumer.status === "connected");
+  const consumerStatus = primaryConsumer?.status ?? (hasOutputClients ? "connected" : "inactive");
+  const consumerLabel = primaryConsumer?.appName ?? (hasOutputClients ? `${outputBusLabel} Client` : "Resolume / VJ App");
   const consumerDetail =
     primaryConsumer?.detail ??
     (isOutputStreaming ? `Output is visible on the ${outputBusLabel} bus.` : "Waiting for output.");
   const outputState = selectedSystemOutput?.state ?? (isOutputStreaming ? "publishing" : "bridge-ready");
-  const outputName = syphon?.outputName ?? "INFINIGHTCapture Output";
-  const inputName = syphon?.inputName ?? "INFINIGHTCapture Input";
+  const outputName = selectedNativeOutput?.outputName ?? "INFINIGHTCapture Output";
+  const inputName = selectedNativeOutput?.inputName ?? "INFINIGHTCapture Input";
   const outputNodeLabel = outputName.replace(/^INFINIGHTCapture\s+/i, "");
   const inputNodeLabel = inputName.replace(/^INFINIGHTCapture\s+/i, "");
-  const outputNodeDetail = stripVisibleAppName(selectedSystemOutput?.detail ?? syphon?.detail ?? "Output bridge pending");
+  const outputNodeDetail = stripVisibleAppName(
+    selectedSystemOutput?.detail ?? selectedNativeOutput?.detail ?? "Output bridge pending"
+  );
   const signalTokens = [
     `${Math.round((motion?.confidence ?? 0) * 100)}% confidence`,
     `${motion?.hands.length ?? 0}/2 hands`,
@@ -3615,7 +3623,7 @@ function SignalGraph({
           onPointerUp={stopNodeDrag}
           position={nodePositions.output}
           status={outputState}
-          value={outputTarget === "syphon" ? "Syphon Output" : "Spout Output"}
+          value={`${selectedOutputLabel} Output`}
         />
         <SignalNode
           className="node-consumer"
@@ -3649,7 +3657,7 @@ function SignalGraph({
 
       <div className="signal-inspector">
         <GraphStatusRow label="Output name" value={outputNodeLabel} />
-        <GraphStatusRow label="Client link" value={syphon?.hasOutputClients ? "attached" : "none"} />
+        <GraphStatusRow label="Client link" value={hasOutputClients ? "attached" : "none"} />
         <GraphStatusRow label="Consumer" value={formatPeerList(outputConsumers)} />
         <GraphStatusRow label="Input source" value={formatPeerList(inputSources)} />
       </div>
@@ -4528,6 +4536,87 @@ function GraphStatusRow({ label, value }: { label: string; value: string }) {
 function formatPeerList(peers: SystemSyphonPeer[]) {
   if (peers.length === 0) return "none";
   return peers.map((peer) => `${stripVisibleAppName(peer.appName)}${peer.source === "inferred" ? " inferred" : ""}`).join(", ");
+}
+
+function NativeOutputDiagnostics({
+  contract,
+  output,
+  target
+}: {
+  contract: SystemStatus["nativeBridge"]["outputContract"] | undefined;
+  output: SystemNativeOutputStatus | undefined;
+  target: OutputTarget;
+}) {
+  const label = output?.label ?? (target === "syphon" ? "Syphon" : target === "spout" ? "Spout" : "NDI");
+  const helperName = output?.helperPath?.split(/[\\/]/).pop() ?? "not found";
+  const runtimeName = output?.runtimePath?.split(/[\\/]/).pop() ?? "not found";
+  const bridgeContract = contract ? `${contract.magic}/${contract.pixelFormat.toUpperCase()}` : "pending";
+  const checks = [
+    {
+      id: "available",
+      icon: BadgeCheck,
+      label: "Available",
+      active: Boolean(output?.supportedPlatform && output.bridgeAvailable && output.runtimeAvailable && !output.blocked),
+      tone: output?.supportedPlatform ? "good" : "muted"
+    },
+    {
+      id: "built",
+      icon: Code2,
+      label: "Built",
+      active: Boolean(output?.helperBuilt),
+      tone: output?.helperBuilt ? "good" : "warn"
+    },
+    {
+      id: "running",
+      icon: Play,
+      label: "Running",
+      active: Boolean(output?.running),
+      tone: output?.running ? "good" : "muted"
+    },
+    {
+      id: "blocked",
+      icon: ShieldAlert,
+      label: "Blocked",
+      active: Boolean(output?.blocked),
+      tone: output?.blocked ? "danger" : "muted"
+    },
+    {
+      id: "missing",
+      icon: FileUp,
+      label: "Missing",
+      active: Boolean(output?.missing),
+      tone: output?.missing ? "danger" : "muted"
+    }
+  ];
+
+  return (
+    <div className="native-diagnostics" aria-label={`${label} diagnostics`}>
+      <div className="native-diagnostics-header">
+        <div>
+          <span>Diagnostics</span>
+          <strong>{label}</strong>
+        </div>
+        <i data-state={output?.state ?? "shell-required"}>{output?.state ?? "pending"}</i>
+      </div>
+      <div className="native-check-grid">
+        {checks.map(({ active, icon: Icon, id, label: checkLabel, tone }) => (
+          <div className="native-check" data-active={active ? "true" : "false"} data-tone={tone} key={id}>
+            <Icon size={15} />
+            <span>{checkLabel}</span>
+          </div>
+        ))}
+      </div>
+      <div className="native-diagnostics-meta">
+        <SystemRow label="Packet" value={bridgeContract} />
+        <SystemRow label="Helper" value={helperName} />
+        <SystemRow
+          label="Runtime"
+          value={target === "syphon" && output?.helperBuilt ? "bundled" : runtimeName}
+        />
+      </div>
+      <p>{stripVisibleAppName(output?.lastError ?? output?.detail ?? "Waiting for bridge status.")}</p>
+    </div>
+  );
 }
 
 function EmptyState({ captureState, cameraIssue }: { captureState: CaptureState; cameraIssue: CameraIssue }) {

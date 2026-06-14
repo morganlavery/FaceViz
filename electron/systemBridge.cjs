@@ -12,9 +12,34 @@ let spoutProcess = null;
 let spoutLastError = "";
 let spoutWriteBusy = false;
 let spoutPublishedAt = 0;
+let ndiProcess = null;
+let ndiLastError = "";
+let ndiWriteBusy = false;
+let ndiPublishedAt = 0;
+
+const OUTPUT_NAME = "INFINIGHTCapture Output";
+const INPUT_NAME = "INFINIGHTCapture Input";
+const nativeOutputBridgeContract = {
+  protocol: "infinightcapture.raw-rgba.v1",
+  lengthPrefix: "uint32be",
+  frameHeaderBytes: 16,
+  magic: "FVZ1",
+  pixelFormat: "rgba8",
+  byteOrder: "rgba",
+  bytesPerPixel: 4,
+  orientation: "top-left"
+};
 
 const isSyphonRunning = () => Boolean(syphonProcess && !syphonProcess.killed && syphonProcess.exitCode === null);
 const isSpoutRunning = () => Boolean(spoutProcess && !spoutProcess.killed && spoutProcess.exitCode === null);
+const isNdiRunning = () => Boolean(ndiProcess && !ndiProcess.killed && ndiProcess.exitCode === null);
+
+const outputLabel = (target) => {
+  if (target === "syphon") return "Syphon";
+  if (target === "spout") return "Spout";
+  if (target === "ndi") return "NDI";
+  return "Output";
+};
 
 const logNativeOutput = (target, message) => {
   const logPath = path.join(app.getPath("logs"), `${target}.log`);
@@ -62,6 +87,57 @@ const syphonPeer = ({ appName, status, source, detail, serverName = "INFINIGHTCa
   source,
   detail
 });
+
+const nativePeer = ({ appName, status, source, detail, serverName = OUTPUT_NAME }) => ({
+  id: `${appName}:${serverName}:${status}`,
+  appName,
+  serverName,
+  status,
+  source,
+  detail
+});
+
+const getSyphonPeers = () => {
+  const runningConsumers = getRunningSyphonConsumers();
+  const outputConsumers = [];
+
+  if (syphonHasClients) {
+    if (runningConsumers.length > 0) {
+      outputConsumers.push(
+        ...runningConsumers.map((appName) =>
+          nativePeer({
+            appName,
+            status: "connected",
+            source: "inferred",
+            detail: "Syphon reports an attached client while this app is running."
+          })
+        )
+      );
+    } else {
+      outputConsumers.push(
+        nativePeer({
+          appName: "Unknown Syphon client",
+          status: "connected",
+          source: "native",
+          detail: "Syphon reports a client attached to INFINIGHTCapture Output."
+        })
+      );
+    }
+  } else if (runningConsumers.length > 0) {
+    outputConsumers.push(
+      ...runningConsumers.map((appName) =>
+        nativePeer({
+          appName,
+          status: "watching",
+          source: "inferred",
+          detail: "App is running; no attached INFINIGHTCapture Output client reported yet."
+        })
+      )
+    );
+  }
+
+  return outputConsumers;
+};
 
 const getSyphonStatus = () => {
   const runningConsumers = getRunningSyphonConsumers();
@@ -152,33 +228,217 @@ const findSpoutLibraryDirectory = () => {
   return candidates.find((candidate) => candidate && fs.existsSync(path.join(candidate, "SpoutLibrary.dll")));
 };
 
-const outputStatusForPlatform = () => {
-  const platform = process.platform;
+const findSpoutLibraryPath = () => {
+  const directory = findSpoutLibraryDirectory();
+  return directory ? path.join(directory, "SpoutLibrary.dll") : "";
+};
+
+const ndiExecutableName = () => (process.platform === "win32" ? "NDIFramePublisher.exe" : "NDIFramePublisher");
+
+const findNdiHelper = () => {
+  const executableName = ndiExecutableName();
+  const candidates = [
+    path.join(process.resourcesPath || "", executableName),
+    path.join(app.getAppPath(), "native/build", executableName),
+    path.join(__dirname, "../native/build", executableName),
+    path.join(process.cwd(), "native/build", executableName)
+  ];
+
+  return candidates.find((candidate) => candidate && fs.existsSync(candidate));
+};
+
+const getNdiRuntimeCandidates = () => {
+  if (process.platform === "win32") {
+    return [
+      path.join(process.resourcesPath || "", "Processing.NDI.Lib.x64.dll"),
+      path.join(app.getAppPath(), "native/build/Processing.NDI.Lib.x64.dll"),
+      path.join(__dirname, "../native/build/Processing.NDI.Lib.x64.dll"),
+      path.join(process.cwd(), "native/build/Processing.NDI.Lib.x64.dll"),
+      path.join(process.env.NDI_RUNTIME_DIR || "", "Processing.NDI.Lib.x64.dll")
+    ];
+  }
+
+  if (process.platform === "darwin") {
+    return [
+      path.join(process.resourcesPath || "", "libndi.dylib"),
+      path.join(app.getAppPath(), "native/build/libndi.dylib"),
+      path.join(__dirname, "../native/build/libndi.dylib"),
+      path.join(process.cwd(), "native/build/libndi.dylib"),
+      path.join(process.env.NDI_RUNTIME_DIR || "", "libndi.dylib"),
+      "/usr/local/lib/libndi.dylib",
+      "/opt/homebrew/lib/libndi.dylib"
+    ];
+  }
 
   return [
-    {
-      target: "syphon",
-      available: platform === "darwin",
-      state: platform === "darwin" ? (isSyphonRunning() ? "publishing" : "bridge-ready") : "unavailable",
-      detail:
-        platform === "darwin"
-          ? isSyphonRunning()
-            ? "Publishing as INFINIGHTCapture Output"
-            : "Ready to publish INFINIGHTCapture Output"
-          : "Syphon is macOS-only"
-    },
-    {
-      target: "spout",
-      available: platform === "win32",
-      state: platform === "win32" ? (isSpoutRunning() ? "publishing" : "bridge-ready") : "unavailable",
-      detail:
-        platform === "win32"
-          ? isSpoutRunning()
-            ? "Publishing as INFINIGHTCapture Output"
-            : "Ready to publish INFINIGHTCapture Output"
-          : "Spout is Windows-only"
-    }
+    path.join(process.resourcesPath || "", "libndi.so"),
+    path.join(app.getAppPath(), "native/build/libndi.so"),
+    path.join(__dirname, "../native/build/libndi.so"),
+    path.join(process.cwd(), "native/build/libndi.so"),
+    path.join(process.env.NDI_RUNTIME_DIR || "", "libndi.so"),
+    "/usr/local/lib/libndi.so",
+    "/usr/lib/libndi.so"
   ];
+};
+
+const findNdiRuntimePath = () => getNdiRuntimeCandidates().find((candidate) => candidate && fs.existsSync(candidate)) || "";
+
+const isSupportedOutputPlatform = (target) => {
+  if (target === "syphon") return process.platform === "darwin";
+  if (target === "spout") return process.platform === "win32";
+  if (target === "ndi") return process.platform === "darwin" || process.platform === "win32" || process.platform === "linux";
+  return false;
+};
+
+const getOutputHelperPath = (target) => {
+  if (target === "syphon") return findSyphonHelper();
+  if (target === "spout") return findSpoutHelper();
+  if (target === "ndi") return findNdiHelper();
+  return "";
+};
+
+const getOutputRuntimePath = (target, helperPath) => {
+  if (target === "syphon") return helperPath;
+  if (target === "spout") return findSpoutLibraryPath();
+  if (target === "ndi") return findNdiRuntimePath();
+  return "";
+};
+
+const isOutputRunning = (target) => {
+  if (target === "syphon") return isSyphonRunning();
+  if (target === "spout") return isSpoutRunning();
+  if (target === "ndi") return isNdiRunning();
+  return false;
+};
+
+const getOutputLastError = (target) => {
+  if (target === "syphon") return syphonLastError;
+  if (target === "spout") return spoutLastError;
+  if (target === "ndi") return ndiLastError;
+  return "";
+};
+
+const getOutputLastFrameAt = (target) => {
+  if (target === "syphon") return syphonClientSignalAt || undefined;
+  if (target === "spout") return spoutPublishedAt || undefined;
+  if (target === "ndi") return ndiPublishedAt || undefined;
+  return undefined;
+};
+
+const getOutputPlatformDetail = (target) => {
+  if (target === "syphon") return "macOS-only";
+  if (target === "spout") return "Windows-only";
+  if (target === "ndi") return "available on macOS, Windows, and Linux";
+  return "unsupported";
+};
+
+const getOutputHelperName = (target) => {
+  if (target === "syphon") return "SyphonFramePublisher";
+  if (target === "spout") return "SpoutFramePublisher.exe";
+  if (target === "ndi") return ndiExecutableName();
+  return "native output helper";
+};
+
+const getMissingRuntimeDetail = (target) => {
+  if (target === "spout") return "SpoutLibrary.dll is missing.";
+  if (target === "ndi") return "NDI runtime library is missing. Install the NDI SDK/runtime or copy it to native/build.";
+  return `${outputLabel(target)} runtime is missing.`;
+};
+
+const getNativeOutputStatus = (target) => {
+  const isSyphon = target === "syphon";
+  const label = outputLabel(target);
+  const supportedPlatform = isSupportedOutputPlatform(target);
+  const helperPath = getOutputHelperPath(target);
+  const runtimePath = getOutputRuntimePath(target, helperPath);
+  const helperBuilt = Boolean(helperPath);
+  const runtimeAvailable = target === "syphon" ? helperBuilt : Boolean(runtimePath);
+  const running = isOutputRunning(target);
+  const lastError = getOutputLastError(target);
+  const missing = supportedPlatform && (!helperBuilt || !runtimeAvailable);
+  const blocked = supportedPlatform && !running && !missing && Boolean(lastError);
+  const outputConsumers = isSyphon ? getSyphonPeers() : [];
+  const lastFrameAt = getOutputLastFrameAt(target);
+
+  let state = "unsupported";
+  if (supportedPlatform) {
+    if (running) {
+      state = "running";
+    } else if (blocked) {
+      state = "blocked";
+    } else if (missing) {
+      state = "missing";
+    } else if (helperBuilt && runtimeAvailable) {
+      state = "built";
+    } else {
+      state = "available";
+    }
+  }
+
+  let detail = `${label} is ${getOutputPlatformDetail(target)}.`;
+  if (supportedPlatform) {
+    if (running) {
+      detail = `${label} is publishing as ${OUTPUT_NAME}.`;
+    } else if (blocked) {
+      detail = lastError;
+    } else if (!helperBuilt) {
+      detail = `${getOutputHelperName(target)} is missing.`;
+    } else if (!runtimeAvailable) {
+      detail = getMissingRuntimeDetail(target);
+    } else {
+      detail = `${label} helper is built and ready.`;
+    }
+  }
+
+  return {
+    target,
+    label,
+    outputName: OUTPUT_NAME,
+    inputName: INPUT_NAME,
+    supportedPlatform,
+    bridgeAvailable: true,
+    helperBuilt,
+    runtimeAvailable,
+    running,
+    blocked,
+    missing,
+    state,
+    detail,
+    helperPath: helperPath || undefined,
+    runtimePath: runtimePath || undefined,
+    lastError: lastError || undefined,
+    lastFrameAt,
+    updatedAt: Date.now(),
+    outputConsumers,
+    inputSources: []
+  };
+};
+
+const getNativeOutputStatuses = () => [
+  getNativeOutputStatus("syphon"),
+  getNativeOutputStatus("spout"),
+  getNativeOutputStatus("ndi")
+];
+
+const outputStatusForPlatform = () => {
+  return getNativeOutputStatuses().map((status) => ({
+    target: status.target,
+    available:
+      status.supportedPlatform &&
+      status.bridgeAvailable &&
+      status.helperBuilt &&
+      status.runtimeAvailable &&
+      !status.blocked,
+    state:
+      status.state === "running"
+        ? "publishing"
+        : status.state === "built" || status.state === "available"
+          ? "bridge-ready"
+          : status.state === "unsupported"
+            ? "unavailable"
+            : status.state,
+    detail: status.detail
+  }));
 };
 
 const getCameraAccessStatus = () => {
@@ -198,10 +458,12 @@ const getSystemStatus = () => ({
   cameraAccess: getCameraAccessStatus(),
   nativeBridge: {
     available: true,
-    version: 1,
-    framePublisher: isSyphonRunning() || isSpoutRunning() ? "active" : "planned"
+    version: 2,
+    framePublisher: isSyphonRunning() || isSpoutRunning() || isNdiRunning() ? "active" : "planned",
+    outputContract: nativeOutputBridgeContract
   },
   outputs: outputStatusForPlatform(),
+  nativeOutputs: getNativeOutputStatuses(),
   syphon: getSyphonStatus()
 });
 
@@ -213,7 +475,7 @@ const validateFrame = (target, frame) => {
     return {
       ok: false,
       target,
-      reason: `${target === "syphon" ? "Syphon" : "Spout"} frame payload is invalid.`
+      reason: `${outputLabel(target)} frame payload is invalid.`
     };
   }
 
@@ -223,7 +485,7 @@ const validateFrame = (target, frame) => {
     return {
       ok: false,
       target,
-      reason: `${target === "syphon" ? "Syphon" : "Spout"} frame byte count mismatch: expected ${expectedBytes}, got ${pixelBuffer.length}.`
+      reason: `${outputLabel(target)} frame byte count mismatch: expected ${expectedBytes}, got ${pixelBuffer.length}.`
     };
   }
 
@@ -338,7 +600,7 @@ const startSyphonOutput = () => {
     stdio: ["pipe", "ignore", "pipe"],
     env: {
       ...process.env,
-      INFINIGHTCAPTURE_SYPHON_NAME: "INFINIGHTCapture Output"
+      INFINIGHTCAPTURE_SYPHON_NAME: OUTPUT_NAME
     }
   });
   logNativeOutput("syphon", `[pid] ${syphonProcess.pid}`);
@@ -416,7 +678,7 @@ const startSpoutOutput = () => {
     env: {
       ...process.env,
       PATH: `${spoutLibraryDirectory}${path.delimiter}${process.env.PATH || ""}`,
-      INFINIGHTCAPTURE_SPOUT_NAME: "INFINIGHTCapture Output"
+      INFINIGHTCAPTURE_SPOUT_NAME: OUTPUT_NAME
     }
   });
   logNativeOutput("spout", `[pid] ${spoutProcess.pid}`);
@@ -441,6 +703,83 @@ const startSpoutOutput = () => {
   return {
     ok: true,
     target: "spout"
+  };
+};
+
+const startNdiOutput = () => {
+  if (!isSupportedOutputPlatform("ndi")) {
+    return {
+      ok: false,
+      target: "ndi",
+      reason: "NDI output is available on macOS, Windows, and Linux."
+    };
+  }
+
+  if (isNdiRunning()) {
+    return {
+      ok: true,
+      target: "ndi"
+    };
+  }
+
+  const helper = findNdiHelper();
+  if (!helper) {
+    ndiLastError = "NDIFramePublisher is missing. Run npm run native:build:ndi after installing the NDI SDK.";
+    return {
+      ok: false,
+      target: "ndi",
+      reason: ndiLastError
+    };
+  }
+
+  const ndiRuntimePath = findNdiRuntimePath();
+  if (!ndiRuntimePath) {
+    ndiLastError = "NDI runtime library is missing. Install the NDI runtime or copy it to native/build.";
+    return {
+      ok: false,
+      target: "ndi",
+      reason: ndiLastError
+    };
+  }
+
+  ndiLastError = "";
+  ndiWriteBusy = false;
+  ndiPublishedAt = Date.now();
+  const ndiRuntimeDirectory = path.dirname(ndiRuntimePath);
+  logNativeOutput("ndi", `[spawn] ${helper}`);
+  ndiProcess = spawn(helper, [], {
+    cwd: path.dirname(helper),
+    stdio: ["pipe", "ignore", "pipe"],
+    env: {
+      ...process.env,
+      PATH: `${ndiRuntimeDirectory}${path.delimiter}${process.env.PATH || ""}`,
+      LD_LIBRARY_PATH: `${ndiRuntimeDirectory}${path.delimiter}${process.env.LD_LIBRARY_PATH || ""}`,
+      DYLD_LIBRARY_PATH: `${ndiRuntimeDirectory}${path.delimiter}${process.env.DYLD_LIBRARY_PATH || ""}`,
+      INFINIGHTCAPTURE_NDI_NAME: OUTPUT_NAME
+    }
+  });
+  logNativeOutput("ndi", `[pid] ${ndiProcess.pid}`);
+
+  ndiProcess.stderr.on("data", (chunk) => {
+    const message = String(chunk).trimEnd();
+    logNativeOutput("ndi", message);
+    if (/published-frame/i.test(message)) {
+      ndiPublishedAt = Date.now();
+    }
+  });
+  ndiProcess.on("error", (error) => {
+    ndiLastError = error.message;
+    logNativeOutput("ndi", `[error] ${error.message}`);
+  });
+  ndiProcess.on("exit", (code, signal) => {
+    logNativeOutput("ndi", `[exit] code=${code} signal=${signal}`);
+    ndiProcess = null;
+    ndiWriteBusy = false;
+  });
+
+  return {
+    ok: true,
+    target: "ndi"
   };
 };
 
@@ -474,6 +813,22 @@ const stopSpoutOutput = () => {
   return {
     ok: true,
     target: "spout"
+  };
+};
+
+const stopNdiOutput = () => {
+  if (ndiProcess) {
+    ndiProcess.stdin.end();
+    ndiProcess.kill();
+    ndiProcess = null;
+  }
+
+  ndiWriteBusy = false;
+  ndiPublishedAt = Date.now();
+
+  return {
+    ok: true,
+    target: "ndi"
   };
 };
 
@@ -521,22 +876,49 @@ const publishSpoutFrame = (frame) => {
   return result;
 };
 
+const publishNdiFrame = (frame) => {
+  if (!isNdiRunning()) {
+    return {
+      ok: false,
+      target: "ndi",
+      reason: ndiLastError || "NDI output is not running."
+    };
+  }
+
+  const result = writeFramePacket({
+    target: "ndi",
+    processHandle: ndiProcess,
+    frame,
+    busy: () => ndiWriteBusy,
+    setBusy: (value) => {
+      ndiWriteBusy = value;
+    }
+  });
+  if (result.ok) {
+    ndiPublishedAt = Date.now();
+  }
+  return result;
+};
+
 const registerSystemBridge = () => {
   ipcMain.handle("infinightcapture:system-status", () => getSystemStatus());
   ipcMain.handle("infinightcapture:request-camera-access", () => requestCameraAccess());
   ipcMain.handle("infinightcapture:output-start", (_event, target) => {
     if (target === "syphon") return startSyphonOutput();
     if (target === "spout") return startSpoutOutput();
+    if (target === "ndi") return startNdiOutput();
     return { ok: false, target, reason: "Unknown output target." };
   });
   ipcMain.handle("infinightcapture:output-stop", (_event, target) => {
     if (target === "syphon") return stopSyphonOutput();
     if (target === "spout") return stopSpoutOutput();
+    if (target === "ndi") return stopNdiOutput();
     return { ok: false, target };
   });
   ipcMain.handle("infinightcapture:output-frame", (_event, target, frame) => {
     if (target === "syphon") return publishSyphonFrame(frame);
     if (target === "spout") return publishSpoutFrame(frame);
+    if (target === "ndi") return publishNdiFrame(frame);
     return { ok: false, target, reason: "Unknown output target." };
   });
 };

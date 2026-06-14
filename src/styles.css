@@ -2087,6 +2087,140 @@ body.layout-resizing-stage * {
   white-space: nowrap;
 }
 
+.native-diagnostics {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.26);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(var(--brand-blue-rgb), 0.08), transparent),
+    rgba(4, 15, 22, 0.82);
+}
+
+.native-diagnostics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.native-diagnostics-header div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.native-diagnostics-header span {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.native-diagnostics-header strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.native-diagnostics-header i {
+  flex: 0 0 auto;
+  max-width: 112px;
+  overflow: hidden;
+  padding: 5px 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.34);
+  border-radius: 999px;
+  color: var(--accent-soft);
+  background: rgba(5, 18, 27, 0.9);
+  font-size: 0.62rem;
+  font-style: normal;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.native-diagnostics-header i[data-state="running"],
+.native-diagnostics-header i[data-state="built"],
+.native-diagnostics-header i[data-state="available"] {
+  border-color: rgba(var(--accent-rgb), 0.62);
+  color: var(--brand-white);
+  background: rgba(0, 111, 145, 0.58);
+}
+
+.native-diagnostics-header i[data-state="blocked"],
+.native-diagnostics-header i[data-state="missing"] {
+  border-color: rgba(255, 106, 128, 0.5);
+  color: #ffdce1;
+  background: rgba(92, 20, 30, 0.62);
+}
+
+.native-check-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.native-check {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 36px;
+  padding: 6px 8px;
+  border: 1px solid rgba(var(--accent-rgb), 0.18);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(2, 9, 14, 0.66);
+}
+
+.native-check[data-active="true"][data-tone="good"] {
+  border-color: rgba(var(--accent-rgb), 0.58);
+  color: var(--brand-white);
+  background: rgba(0, 96, 124, 0.52);
+}
+
+.native-check[data-active="true"][data-tone="danger"],
+.native-check[data-active="false"][data-tone="warn"] {
+  border-color: rgba(255, 106, 128, 0.46);
+  color: #ffdce1;
+  background: rgba(80, 17, 28, 0.54);
+}
+
+.native-check span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.native-diagnostics-meta {
+  display: grid;
+  gap: 6px;
+}
+
+.native-diagnostics-meta .system-row {
+  grid-template-columns: 64px minmax(0, 1fr);
+}
+
+.native-diagnostics-meta .system-row strong {
+  max-width: none;
+}
+
+.native-diagnostics p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .output-card.active,
 .effect-button.active,
 .shader-scene-button.active {
