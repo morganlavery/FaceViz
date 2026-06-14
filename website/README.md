@@ -28,10 +28,13 @@ Cloudflare hosts the site, checkout API, and protected downloads. Stripe handles
 
 1. In Stripe, create a product named `INFINIGHTCapture Full License`.
 2. Add a one-time USD price for `$5.00`.
-3. Copy the Stripe price ID. It starts with `price_`.
+3. Copy either the Stripe price ID, which starts with `price_`, or the product ID, which starts with `prod_`.
 4. In Cloudflare Pages, add these environment variables:
    - `SITE_URL`: `https://infinightcapture.com`
-   - `STRIPE_PRICE_ID`: the Stripe `price_...` value
+   - `STRIPE_PRODUCT_ID`: `prod_UhcGyJcNr4E0xd`
+   - `STRIPE_CURRENCY`: `usd`
+   - `STRIPE_UNIT_AMOUNT`: `500`
+   - Optional: `STRIPE_PRICE_ID`, if you want Checkout to use a fixed Stripe `price_...` value instead
    - `STRIPE_AUTOMATIC_TAX`: `false` until Stripe Tax is configured
 5. In Cloudflare Pages, add this secret:
    - `STRIPE_SECRET_KEY`: your Stripe secret key

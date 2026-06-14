@@ -4,6 +4,9 @@ pages_build_output_dir = "."
 
 [vars]
 SITE_URL = "https://infinightcapture.com"
+STRIPE_PRODUCT_ID = "prod_UhcGyJcNr4E0xd"
+STRIPE_CURRENCY = "usd"
+STRIPE_UNIT_AMOUNT = "500"
 STRIPE_AUTOMATIC_TAX = "false"
 PAID_MAC_OBJECT_KEY = "paid/INFINIGHTCapture-Paid-0.1.0-mac-arm64.dmg"
 PAID_WINDOWS_OBJECT_KEY = "paid/INFINIGHTCapture-Paid-Setup-0.1.0-win-x64.exe"

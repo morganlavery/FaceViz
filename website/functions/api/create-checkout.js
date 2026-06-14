@@ -11,7 +11,7 @@ function json(data, init = {}) {
 }
 
 export async function onRequestPost({ env, request }) {
-  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_PRICE_ID) {
+  if (!env.STRIPE_SECRET_KEY || (!env.STRIPE_PRICE_ID && !env.STRIPE_PRODUCT_ID)) {
     return json({ error: "Checkout is not configured yet." }, { status: 503 });
   }
 
@@ -20,13 +20,20 @@ export async function onRequestPost({ env, request }) {
     mode: "payment",
     success_url: `${siteUrl}/thanks/?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${siteUrl}/#pricing`,
-    "line_items[0][price]": env.STRIPE_PRICE_ID,
     "line_items[0][quantity]": "1",
     allow_promotion_codes: "true",
     billing_address_collection: "auto",
     "metadata[product]": "INFINIGHTCapture",
     "metadata[edition]": "paid"
   });
+
+  if (env.STRIPE_PRICE_ID) {
+    params.set("line_items[0][price]", env.STRIPE_PRICE_ID);
+  } else {
+    params.set("line_items[0][price_data][currency]", env.STRIPE_CURRENCY || "usd");
+    params.set("line_items[0][price_data][product]", env.STRIPE_PRODUCT_ID);
+    params.set("line_items[0][price_data][unit_amount]", env.STRIPE_UNIT_AMOUNT || "500");
+  }
 
   if (env.STRIPE_AUTOMATIC_TAX === "true") {
     params.set("automatic_tax[enabled]", "true");
