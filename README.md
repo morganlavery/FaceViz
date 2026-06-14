@@ -58,9 +58,12 @@ npm run build
 
 ## Package
 
-### Windows Downloads From GitHub
+### Downloads From GitHub
 
-You can develop on macOS and let GitHub build the Windows package. The Windows package workflow runs on GitHub-hosted Windows, builds Spout support, runs `npm run package:win`, and uploads `INFINIGHTCapture-win32-x64.zip` as a workflow artifact.
+You can develop on macOS and let GitHub build the public demo downloads. The installer workflow runs on GitHub-hosted macOS and Windows machines, then uploads:
+
+- `INFINIGHTCapture-Demo-0.1.0-mac-arm64.dmg` for Mac users
+- `INFINIGHTCapture-Demo-Setup-0.1.0-win-x64.exe` for Windows users
 
 For public downloads, create and push a version tag:
 
@@ -69,7 +72,7 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow attaches the Windows zip to that GitHub Release. Windows users can download the zip from Releases; they do not need Visual Studio, Node, npm, or the Spout SDK unless they want to build from source.
+The workflow attaches the demo DMG and demo Windows setup EXE to that GitHub Release. Non-developers can download the installer from Releases; they do not need Visual Studio, Node, npm, Xcode, or the Spout SDK unless they want to build from source.
 
 macOS Apple Silicon:
 

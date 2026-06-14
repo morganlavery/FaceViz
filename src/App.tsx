@@ -44,6 +44,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import { demoWatermarkLabel, isDemoEdition } from "./licensing/edition";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
 import {
   renderFrame,
@@ -103,6 +104,11 @@ import type {
 
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
+type CameraDeviceOption = {
+  deviceId: string;
+  groupId: string;
+  label: string;
+};
 type WorkspaceTab = "preview" | "shader" | "pads" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
 type PerformanceLayerMode = "wireframe" | "pads" | "xy";
@@ -360,6 +366,7 @@ const GESTURE_STATE_MACHINE_STORAGE_KEY = "faceviz.gestureStateMachine.v1";
 const GESTURE_ACTION_MATRIX_STORAGE_KEY = "faceviz.gestureActionMatrix.v1";
 const VISUAL_DRUM_PAD_STORAGE_KEY = "faceviz.visualDrumPads.v1";
 const VISUAL_DRUM_PAD_SET_STORAGE_KEY = "faceviz.visualDrumPadSet.v1";
+const CAMERA_DEVICE_STORAGE_KEY = "faceviz.cameraDeviceId.v1";
 const WORKSPACE_LAYOUT_STORAGE_KEY = "faceviz.workspaceLayout.v1";
 const GESTURE_ACTION_MATRIX_PRESET_SCHEMA = "faceviz.gestureActionMatrix.v1";
 const defaultWorkspaceLayout: WorkspaceLayout = {
@@ -1069,6 +1076,13 @@ const getCaptureError = (error: unknown) => {
     };
   }
 
+  if (error instanceof DOMException && error.name === "OverconstrainedError") {
+    return {
+      issue: "missing" as CameraIssue,
+      message: "Selected camera is unavailable. Choose another source or reconnect it."
+    };
+  }
+
   if (!navigator.mediaDevices?.getUserMedia) {
     return {
       issue: "browser" as CameraIssue,
@@ -1081,6 +1095,25 @@ const getCaptureError = (error: unknown) => {
     message: error instanceof Error ? error.message : "Unable to start camera."
   };
 };
+
+const getCameraDevices = async (): Promise<CameraDeviceOption[]> => {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices
+    .filter((device) => device.kind === "videoinput")
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      groupId: device.groupId,
+      label: device.label || `Camera ${index + 1}`
+    }));
+};
+
+const getCameraVideoConstraints = (deviceId: string): MediaTrackConstraints => ({
+  width: { ideal: 1280 },
+  height: { ideal: 720 },
+  frameRate: { ideal: 60, max: 60 },
+  ...(deviceId ? { deviceId: { exact: deviceId } } : { facingMode: "user" })
+});
 
 const useReducedMotion = () => {
   const [reduced, setReduced] = useState(false);
@@ -1136,7 +1169,12 @@ export function App() {
   const outputCompositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
-    selectedEffect: "auto"
+    selectedEffect: "auto",
+    watermark: {
+      enabled: isDemoEdition,
+      label: demoWatermarkLabel,
+      strength: "strong"
+    }
   });
   const lastVideoTimeRef = useRef(-1);
   const lastFpsSampleRef = useRef({ timestamp: performance.now(), frames: 0 });
@@ -1148,6 +1186,14 @@ export function App() {
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
   const [error, setError] = useState("");
   const [cameraIssue, setCameraIssue] = useState<CameraIssue>(null);
+  const [cameraDevices, setCameraDevices] = useState<CameraDeviceOption[]>([]);
+  const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState(() => {
+    try {
+      return window.localStorage.getItem(CAMERA_DEVICE_STORAGE_KEY) ?? "";
+    } catch {
+      return "";
+    }
+  });
   const [motion, setMotion] = useState<MotionFrame | null>(null);
   const [fps, setFps] = useState(0);
   const [latency, setLatency] = useState(0);
@@ -1283,6 +1329,8 @@ export function App() {
   const activeTrackingMode = trackingPreviewModes.find((previewMode) => previewMode.id === mode) ?? trackingPreviewModes[0];
   const activePerformanceLayerMode =
     performanceLayerModes.find((performanceMode) => performanceMode.id === performanceLayerMode) ?? performanceLayerModes[0];
+  const selectedCameraDevice = cameraDevices.find((device) => device.deviceId === selectedCameraDeviceId);
+  const selectedCameraLabel = selectedCameraDevice?.label ?? (selectedCameraDeviceId ? "Selected camera" : "System default");
   const appShellStyle = {
     "--control-rail-width": `${workspaceLayout.railWidth}px`,
     "--stage-panel-height": `${workspaceLayout.stageHeight}px`
@@ -1317,6 +1365,21 @@ export function App() {
       ...current,
       [sectionId]: !current[sectionId]
     }));
+  }, []);
+
+  const refreshCameraDevices = useCallback(async () => {
+    try {
+      const devices = await getCameraDevices();
+      setCameraDevices(devices);
+      setSelectedCameraDeviceId((current) => {
+        if (current && devices.length > 0 && !devices.some((device) => device.deviceId === current)) {
+          return "";
+        }
+        return current;
+      });
+    } catch {
+      setCameraDevices([]);
+    }
   }, []);
 
   const stopCapture = useCallback(() => {
@@ -1827,8 +1890,11 @@ export function App() {
     rafRef.current = requestAnimationFrame(renderLoop);
   }, [executeGestureActionRoutes, processVisualDrumPadHits, updateVisualDrumPadOverlay]);
 
-  const startCapture = useCallback(async () => {
-    if (captureState === "loading" || captureState === "running") return;
+  const startCapture = useCallback(async (
+    cameraDeviceId = selectedCameraDeviceId,
+    options: { force?: boolean } = {}
+  ) => {
+    if (!options.force && (captureState === "loading" || captureState === "running")) return;
     setError("");
     setCameraIssue(null);
     setCaptureState("loading");
@@ -1851,17 +1917,13 @@ export function App() {
       setSystemStatus((current) => (current ? { ...current, cameraAccess: systemCameraAccess.status } : current));
 
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 60, max: 60 },
-          facingMode: "user"
-        },
+        video: getCameraVideoConstraints(cameraDeviceId),
         audio: false
       });
       streamRef.current = stream;
       video.srcObject = stream;
       await video.play();
+      refreshCameraDevices();
 
       if (!handLandmarkerRef.current || !poseLandmarkerRef.current || !faceLandmarkerRef.current) {
         const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
@@ -1924,7 +1986,17 @@ export function App() {
       setCaptureState("error");
       runningRef.current = false;
     }
-  }, [captureState]);
+  }, [captureState, refreshCameraDevices, selectedCameraDeviceId]);
+
+  const selectCameraDevice = useCallback((deviceId: string) => {
+    setSelectedCameraDeviceId(deviceId);
+    if (runningRef.current || captureState === "running") {
+      stopCapture();
+      window.setTimeout(() => {
+        startCapture(deviceId, { force: true });
+      }, 0);
+    }
+  }, [captureState, startCapture, stopCapture]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1947,6 +2019,26 @@ export function App() {
   useEffect(() => {
     window.localStorage.setItem(SHADER_LIBRARY_STORAGE_KEY, JSON.stringify(importedShaderScenes));
   }, [importedShaderScenes]);
+
+  useEffect(() => {
+    try {
+      if (selectedCameraDeviceId) {
+        window.localStorage.setItem(CAMERA_DEVICE_STORAGE_KEY, selectedCameraDeviceId);
+      } else {
+        window.localStorage.removeItem(CAMERA_DEVICE_STORAGE_KEY);
+      }
+    } catch {
+      // Camera selection is non-critical; ignore private-storage failures.
+    }
+  }, [selectedCameraDeviceId]);
+
+  useEffect(() => {
+    refreshCameraDevices();
+    navigator.mediaDevices?.addEventListener?.("devicechange", refreshCameraDevices);
+    return () => {
+      navigator.mediaDevices?.removeEventListener?.("devicechange", refreshCameraDevices);
+    };
+  }, [refreshCameraDevices]);
 
   useEffect(() => {
     window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify(workspaceLayout));
@@ -2057,7 +2149,12 @@ export function App() {
       trackingMode: mode,
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings,
-      visualDrumPads: visualDrumPadOverlayRef.current
+      visualDrumPads: visualDrumPadOverlayRef.current,
+      watermark: {
+        enabled: isDemoEdition,
+        label: demoWatermarkLabel,
+        strength: "subtle"
+      }
     };
     outputCompositorOptionsRef.current = {
       showRig: selectedOutputComposition.showRig && performanceLayerMode === "wireframe",
@@ -2068,7 +2165,12 @@ export function App() {
       visualMode: "shader",
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings,
-      visualDrumPads: visualDrumPadOverlayRef.current
+      visualDrumPads: visualDrumPadOverlayRef.current,
+      watermark: {
+        enabled: isDemoEdition,
+        label: demoWatermarkLabel,
+        strength: "strong"
+      }
     };
   }, [
     activeShaderScene,
@@ -2657,6 +2759,38 @@ export function App() {
 
         {activeWorkspace !== "signal" ? (
           <>
+            <section className="camera-source-row" aria-label="Camera source">
+              <label className="camera-source-control">
+                <span>
+                  <Camera size={15} />
+                  Source
+                </span>
+                <div className="source-select-shell">
+                  <select
+                    value={selectedCameraDeviceId}
+                    onChange={(event) => selectCameraDevice(event.target.value)}
+                    disabled={captureState === "loading"}
+                    aria-label="Camera source"
+                  >
+                    <option value="">System default</option>
+                    {selectedCameraDeviceId && !selectedCameraDevice && (
+                      <option value={selectedCameraDeviceId}>Selected camera</option>
+                    )}
+                    {cameraDevices.map((device, index) => (
+                      <option key={`${device.deviceId}-${device.groupId}-${index}`} value={device.deviceId}>
+                        {device.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={16} />
+                </div>
+              </label>
+              <div className="camera-source-status">
+                <span>{cameraDevices.length > 0 ? `${cameraDevices.length} source${cameraDevices.length === 1 ? "" : "s"}` : "Source scan"}</span>
+                <strong>{selectedCameraLabel}</strong>
+              </div>
+            </section>
+
             <section className="transport-row" aria-label="Capture controls">
               {trackingPreviewModes.map((previewMode) => {
                 const ModeIcon = previewMode.icon;
@@ -2678,7 +2812,7 @@ export function App() {
                   Stop
                 </button>
               ) : (
-                <button className="start-button" onClick={startCapture} disabled={captureState === "loading"}>
+                <button className="start-button" onClick={() => startCapture()} disabled={captureState === "loading"}>
                   {captureState === "loading" ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
                   Start
                 </button>

@@ -106,6 +106,11 @@ export type CompositorOptions = {
   effectAmount: number;
   selectedEffect: string;
   includeCameraFeed?: boolean;
+  watermark?: {
+    enabled: boolean;
+    label: string;
+    strength?: "subtle" | "strong";
+  };
   trackingMode?: TrackingPreviewMode;
   visualMode?: "camera" | "shader";
   shaderScene?: ShaderScene;
@@ -177,6 +182,45 @@ const drawRoundedRect = (
   ctx.lineTo(x, y + nextRadius);
   ctx.quadraticCurveTo(x, y, x + nextRadius, y);
   ctx.closePath();
+};
+
+const drawWatermark = (
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  label: string,
+  strength: "subtle" | "strong" = "strong"
+) => {
+  const margin = Math.max(12, Math.round(Math.min(width, height) * 0.035));
+  const fontSize = Math.max(14, Math.round(Math.min(width, height) * 0.042));
+  const paddingX = Math.round(fontSize * 0.75);
+  const paddingY = Math.round(fontSize * 0.5);
+  const maxTextWidth = width - margin * 2 - paddingX * 2;
+  const alpha = strength === "subtle" ? 0.62 : 0.86;
+
+  ctx.save();
+  ctx.font = `900 ${fontSize}px Inter, system-ui, sans-serif`;
+  const measuredWidth = Math.min(ctx.measureText(label).width, maxTextWidth);
+  const boxWidth = measuredWidth + paddingX * 2;
+  const boxHeight = fontSize + paddingY * 2;
+  const x = margin;
+  const y = height - margin - boxHeight;
+
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = alpha;
+  drawRoundedRect(ctx, x, y, boxWidth, boxHeight, Math.max(8, Math.round(fontSize * 0.35)));
+  ctx.fillStyle = "rgba(2, 8, 15, 0.78)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(198, 244, 93, 0.72)";
+  ctx.lineWidth = Math.max(1, fontSize * 0.06);
+  ctx.stroke();
+
+  ctx.globalAlpha = Math.min(1, alpha + 0.08);
+  ctx.fillStyle = "rgba(247, 243, 234, 0.96)";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, x + paddingX, y + boxHeight / 2, maxTextWidth);
+  ctx.restore();
 };
 
 const gradientDisc = (
@@ -1983,6 +2027,9 @@ export const renderFrame = (
       drawRig(ctx, motion, width, height, trackingMode);
     }
     drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
+    if (options.watermark?.enabled) {
+      drawWatermark(ctx, width, height, options.watermark.label, options.watermark.strength);
+    }
     return;
   }
 
@@ -1999,6 +2046,9 @@ export const renderFrame = (
 
   if (!motion) {
     drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
+    if (options.watermark?.enabled) {
+      drawWatermark(ctx, width, height, options.watermark.label, options.watermark.strength);
+    }
     return;
   }
 
@@ -2051,6 +2101,9 @@ export const renderFrame = (
     drawRig(ctx, motion, width, height, trackingMode);
   }
   drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
+  if (options.watermark?.enabled) {
+    drawWatermark(ctx, width, height, options.watermark.label, options.watermark.strength);
+  }
 };
 
 export const landmarkToUniform = (landmark: Landmark | undefined) => {
