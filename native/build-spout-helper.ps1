@@ -30,7 +30,7 @@ function Import-VisualStudioCompilerEnvironment {
   $environment = & cmd.exe /s /c "`"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
   foreach ($line in $environment) {
     $separator = $line.IndexOf("=")
-    if ($separator -le 0) {
+    if ($separator -le 0 -or $line.StartsWith("=")) {
       continue
     }
 

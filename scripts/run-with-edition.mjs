@@ -8,12 +8,21 @@ if (!["demo", "paid"].includes(edition) || !command) {
 }
 
 const executable = process.platform === "win32" && command === "npm" ? "npm.cmd" : command;
+const env = {
+  ...process.env,
+  VITE_INFINIGHT_EDITION: edition
+};
+
+if (process.platform === "win32") {
+  for (const key of Object.keys(env)) {
+    if (!key || key.startsWith("=")) {
+      delete env[key];
+    }
+  }
+}
 
 const child = spawn(executable, args, {
-  env: {
-    ...process.env,
-    VITE_INFINIGHT_EDITION: edition
-  },
+  env,
   stdio: "inherit"
 });
 
