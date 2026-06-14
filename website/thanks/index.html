@@ -4,15 +4,21 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#02080f" />
     <title>Thanks - INFINIGHTCapture</title>
-    <link rel="stylesheet" href="../styles.css" />
+    <link rel="icon" type="image/png" href="../assets/brand/infinightcapture_icon.png" />
+    <link rel="stylesheet" href="../styles.css?v=download-flow-20260614" />
   </head>
   <body>
     <header class="site-header" aria-label="Primary navigation">
       <a class="brand-mark" href="../" aria-label="INFINIGHTCapture home">
-        <span class="brand-glyph" aria-hidden="true"></span>
-        <span>INFINIGHTCapture</span>
+        <img
+          src="../assets/brand/infinightcapture_horizontal_logo.png"
+          srcset="../assets/brand/infinightcapture_horizontal_logo.png 1x, ../assets/brand/infinightcapture_horizontal_logo_2x.png 2x"
+          width="224"
+          height="69"
+          alt="INFINIGHTCapture"
+        />
       </a>
       <nav class="site-nav" aria-label="Site sections">
         <a href="../#features">Features</a>
@@ -27,7 +33,8 @@
           <p class="eyebrow">Payment complete</p>
           <h1 id="thanks-title">Your no-watermark build is ready.</h1>
           <p>
-            Download the paid installer for your platform. Keep this page open until both downloads finish.
+            Download the paid installer for your platform. A private recovery link is also sent to your checkout email
+            when email delivery is configured.
           </p>
         </div>
         <div class="download-grid">
@@ -43,6 +50,10 @@
             <span>Need help?</span>
             <strong>Email support</strong>
           </a>
+          <a class="download-row" href="../recover/">
+            <span>Lost the installer?</span>
+            <strong>Recover link</strong>
+          </a>
         </div>
       </section>
     </main>
@@ -53,16 +64,22 @@
     </footer>
 
     <script type="module">
-      const sessionId = new URLSearchParams(window.location.search).get("session_id");
+      const searchParams = new URLSearchParams(window.location.search);
+      const sessionId = searchParams.get("session_id");
+      const token = searchParams.get("token");
       document.querySelectorAll("[data-paid-download]").forEach((link) => {
-        if (!sessionId) {
+        if (!sessionId && !token) {
           link.setAttribute("aria-disabled", "true");
           link.addEventListener("click", (event) => event.preventDefault());
           return;
         }
 
         const url = new URL(link.getAttribute("href"), window.location.origin);
-        url.searchParams.set("session_id", sessionId);
+        if (token) {
+          url.searchParams.set("token", token);
+        } else {
+          url.searchParams.set("session_id", sessionId);
+        }
         link.href = url.toString();
       });
     </script>

@@ -11,7 +11,20 @@ STRIPE_UNIT_AMOUNT = "500"
 STRIPE_AUTOMATIC_TAX = "false"
 PAID_MAC_OBJECT_KEY = "paid/INFINIGHTCapture-Paid-0.1.0-mac-arm64.dmg"
 PAID_WINDOWS_OBJECT_KEY = "paid/INFINIGHTCapture-Paid-Setup-0.1.0-win-x64.exe"
+DOWNLOAD_LINK_TTL_SECONDS = "2592000"
+FROM_EMAIL = "INFINIGHTCapture <downloads@infinightcapture.com>"
+SUPPORT_EMAIL = "hello@infinightcapture.com"
+DEMO_RELEASE_REPO = "morganlavery/INFINIGHTCapture"
+DEMO_RELEASE_TAG = "v0.1.0"
+DEMO_MAC_ASSET_NAME = "INFINIGHTCapture-0.1.0-arm64.dmg"
+DEMO_WINDOWS_ASSET_NAME = "INFINIGHTCapture-Demo-Setup-0.1.0-win-x64.exe"
 
 [[r2_buckets]]
 binding = "PAID_RELEASES"
 bucket_name = "infinightcapture-releases"
+
+[[d1_databases]]
+binding = "PURCHASES_DB"
+database_name = "infinightcapture-purchases"
+database_id = "ef0d4780-fbcd-4e24-bdb3-b6dafab3d4f6"
+preview_database_id = "ef0d4780-fbcd-4e24-bdb3-b6dafab3d4f6"

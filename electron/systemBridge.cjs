@@ -1,4 +1,4 @@
-const { app, ipcMain, systemPreferences } = require("electron");
+const { app, ipcMain, shell, systemPreferences } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -903,6 +903,21 @@ const publishNdiFrame = (frame) => {
 const registerSystemBridge = () => {
   ipcMain.handle("infinightcapture:system-status", () => getSystemStatus());
   ipcMain.handle("infinightcapture:request-camera-access", () => requestCameraAccess());
+  ipcMain.handle("infinightcapture:open-external-url", async (_event, url) => {
+    try {
+      const parsedUrl = new URL(url);
+      const allowedHosts = new Set(["infinightcapture.com", "www.infinightcapture.com"]);
+
+      if (parsedUrl.protocol !== "https:" || !allowedHosts.has(parsedUrl.hostname)) {
+        return { ok: false, reason: "Unsupported external URL." };
+      }
+
+      await shell.openExternal(parsedUrl.toString());
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: "Invalid external URL." };
+    }
+  });
   ipcMain.handle("infinightcapture:output-start", (_event, target) => {
     if (target === "syphon") return startSyphonOutput();
     if (target === "spout") return startSpoutOutput();

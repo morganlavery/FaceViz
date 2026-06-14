@@ -13,18 +13,25 @@
       content="Gesture-reactive webcam mocap visuals for Syphon, Spout, and NDI workflows."
     />
     <meta property="og:type" content="website" />
-    <meta name="theme-color" content="#0b0d10" />
+    <meta name="theme-color" content="#02080f" />
     <title>INFINIGHTCapture</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="icon" type="image/png" href="./assets/brand/infinightcapture_icon.png" />
+    <link rel="stylesheet" href="./styles.css?v=download-flow-20260614" />
   </head>
   <body>
     <header class="site-header" aria-label="Primary navigation">
       <a class="brand-mark" href="#top" aria-label="INFINIGHTCapture home">
-        <span class="brand-glyph" aria-hidden="true"></span>
-        <span>INFINIGHTCapture</span>
+        <img
+          src="./assets/brand/infinightcapture_horizontal_logo.png"
+          srcset="./assets/brand/infinightcapture_horizontal_logo.png 1x, ./assets/brand/infinightcapture_horizontal_logo_2x.png 2x"
+          width="224"
+          height="69"
+          alt="INFINIGHTCapture"
+        />
       </a>
       <nav class="site-nav" aria-label="Site sections">
         <a href="#features">Features</a>
+        <a href="#pads">Pads</a>
         <a href="#output">Output</a>
         <a href="#pricing">Pricing</a>
         <a href="#download">Download</a>
@@ -36,6 +43,14 @@
         <canvas id="signal-canvas" class="signal-canvas" aria-hidden="true"></canvas>
         <div class="hero-shell">
           <div class="hero-copy">
+            <img
+              class="hero-logo"
+              src="./assets/brand/infinightcapture_stacked_logo.png"
+              srcset="./assets/brand/infinightcapture_stacked_logo.png 1x, ./assets/brand/infinightcapture_stacked_logo_2x.png 2x"
+              width="320"
+              height="272"
+              alt="INFINIGHTCapture"
+            />
             <p class="eyebrow">Webcam mocap for live visuals</p>
             <h1 id="hero-title"><span>INFINIGHT</span><span>Capture</span></h1>
             <p class="hero-lede">
@@ -50,15 +65,15 @@
 
           <div class="product-stage" aria-label="Animated product preview">
             <div class="stage-toolbar">
-              <span>LIVE COMPOSITOR</span>
-              <span>FACE + HANDS + POSE</span>
+              <span class="stage-brand">CAPTURE PIPELINE</span>
+              <span>FACE + HANDS + POSE + OUTPUT</span>
             </div>
             <div class="motion-frame">
               <canvas id="preview-canvas" width="960" height="620" aria-hidden="true"></canvas>
               <div class="preview-readout">
-                <span>pinch</span>
-                <span>smile</span>
-                <span>hands up</span>
+                <span>face gestures</span>
+                <span>action matrix</span>
+                <span>Syphon / Spout / NDI</span>
               </div>
             </div>
           </div>
@@ -110,6 +125,273 @@
         </div>
       </section>
 
+      <section id="pads" class="pads-band" aria-labelledby="pads-title">
+        <div class="section-heading pads-heading">
+          <p class="eyebrow">Pads + XY control</p>
+          <h2 id="pads-title">The performance surface, shown like the app.</h2>
+          <p>
+            The pads workspace gives each hand a playable control area, then routes strikes and XY
+            movement into shader parameters.
+          </p>
+        </div>
+
+        <div class="pads-product-frame" aria-label="INFINIGHTCapture pads workspace preview">
+          <div class="pads-window-bar">
+            <span>INFINIGHTCapture</span>
+            <div aria-label="Workspace tabs">
+              <span>Preview</span>
+              <span>Shader</span>
+              <strong>Pads</strong>
+              <span>Mapping</span>
+              <span>Signal</span>
+            </div>
+          </div>
+
+          <div class="visual-control-workspace" aria-label="XY boxes and visual drum pads">
+            <div class="visual-control-header">
+              <div>
+                <p class="eyebrow">Control Surface</p>
+                <h3>Aurora Melt</h3>
+              </div>
+              <div class="visual-control-live">
+                <span>2/2 hands</span>
+                <strong>Face</strong>
+              </div>
+            </div>
+
+            <div class="visual-control-layout">
+              <div class="xy-performance-panel">
+                <div class="xy-performance-header">
+                  <div>
+                    <span>XY Box</span>
+                    <strong>Left XY</strong>
+                  </div>
+                  <div>
+                    <span>Target</span>
+                    <strong>Bloom</strong>
+                  </div>
+                </div>
+                <div class="xy-performance-pad">
+                  <div class="xy-performance-cursor" aria-hidden="true"></div>
+                  <div class="xy-performance-axis x" aria-hidden="true"></div>
+                  <div class="xy-performance-axis y" aria-hidden="true"></div>
+                </div>
+                <div class="xy-readout-grid">
+                  <div>
+                    <span>X Axis</span>
+                    <strong>Warp</strong>
+                  </div>
+                  <div>
+                    <span>Y Axis</span>
+                    <strong>Melt</strong>
+                  </div>
+                  <div>
+                    <span>Value</span>
+                    <strong>0.72</strong>
+                  </div>
+                  <div>
+                    <span>Set</span>
+                    <strong>Six pads with XY</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="visual-pad-bank">
+                <div class="visual-pad-toolbar">
+                  <div class="visual-pad-set-tabs" aria-label="Visual drum pad sets">
+                    <button type="button">
+                      <span>Set 1</span>
+                      <strong>Six pads</strong>
+                    </button>
+                    <button class="active" type="button">
+                      <span>Set 2</span>
+                      <strong>Six pads with XY</strong>
+                    </button>
+                    <button type="button">
+                      <span>Set 3</span>
+                      <strong>XY with hold rings</strong>
+                    </button>
+                    <button type="button">
+                      <span>Set 4</span>
+                      <strong>Pressure rings</strong>
+                    </button>
+                    <button type="button">
+                      <span>Set 5</span>
+                      <strong>Gesture zones</strong>
+                    </button>
+                  </div>
+                  <button class="visual-pad-reset" type="button">Reset</button>
+                </div>
+
+                <div class="visual-pad-strike-grid">
+                  <button class="visual-pad-strike selected" type="button">
+                    <span>Left XY</span>
+                    <strong>Bloom</strong>
+                  </button>
+                  <button class="visual-pad-strike" type="button">
+                    <span>Right XY</span>
+                    <strong>Color Shift</strong>
+                  </button>
+                </div>
+
+                <div class="visual-pad-selected-editor">
+                  <div class="visual-pad-selected-header">
+                    <label>
+                      <input checked type="checkbox" />
+                      <span>Left XY</span>
+                    </label>
+                    <strong>Bloom</strong>
+                  </div>
+                  <label class="visual-pad-route-control">
+                    <span>Strike Target</span>
+                    <select aria-label="Strike Target">
+                      <option>Auto: Bloom</option>
+                    </select>
+                  </label>
+                  <div class="visual-pad-route-pair">
+                    <label class="visual-pad-route-control">
+                      <span>X Target</span>
+                      <select aria-label="X Target">
+                        <option>Auto: Warp</option>
+                      </select>
+                    </label>
+                    <label class="visual-pad-route-control">
+                      <span>Y Target</span>
+                      <select aria-label="Y Target">
+                        <option>Auto: Melt</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label class="visual-pad-range-control">
+                    <span>Value</span>
+                    <input max="1" min="0" step="0.01" type="range" value="0.72" />
+                    <strong>0.72</strong>
+                  </label>
+                  <label class="visual-pad-range-control">
+                    <span>Strike</span>
+                    <input max="1" min="0" step="0.01" type="range" value="0.26" />
+                    <strong>0.26</strong>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="visual-drum-pad-editor" aria-label="Visual drum pad mapping">
+            <div class="visual-drum-pad-toolbar">
+              <div>
+                <p class="eyebrow">Visual Drum Pad</p>
+                <h3>Six pads with XY</h3>
+              </div>
+              <button type="button">Reset</button>
+            </div>
+            <div class="visual-drum-pad-set-selector" aria-label="Visual drum pad sets">
+              <button type="button">
+                <span>Set 1</span>
+                <strong>Six pads</strong>
+              </button>
+              <button class="active" type="button">
+                <span>Set 2</span>
+                <strong>Six pads with XY</strong>
+              </button>
+              <button type="button">
+                <span>Set 3</span>
+                <strong>XY with hold rings</strong>
+              </button>
+              <button type="button">
+                <span>Set 4</span>
+                <strong>Pressure rings</strong>
+              </button>
+              <button type="button">
+                <span>Set 5</span>
+                <strong>Gesture zones</strong>
+              </button>
+            </div>
+            <div class="visual-drum-pad-grid">
+              <article class="visual-drum-pad-card">
+                <div class="visual-drum-pad-card-header">
+                  <label>
+                    <input checked type="checkbox" />
+                    <span>Left XY</span>
+                  </label>
+                  <strong>Bloom</strong>
+                </div>
+                <label class="visual-drum-pad-target">
+                  <span>Target</span>
+                  <select aria-label="Left XY target">
+                    <option>Auto</option>
+                  </select>
+                </label>
+                <div class="visual-drum-pad-xy-targets">
+                  <label class="visual-drum-pad-target">
+                    <span>X Axis</span>
+                    <select aria-label="Left XY X axis">
+                      <option>Auto: Warp</option>
+                    </select>
+                  </label>
+                  <label class="visual-drum-pad-target">
+                    <span>Y Axis</span>
+                    <select aria-label="Left XY Y axis">
+                      <option>Auto: Melt</option>
+                    </select>
+                  </label>
+                </div>
+                <label class="visual-drum-pad-range">
+                  <span>Value</span>
+                  <input max="1" min="0" step="0.01" type="range" value="0.72" />
+                  <strong>0.72</strong>
+                </label>
+                <label class="visual-drum-pad-range">
+                  <span>Strike</span>
+                  <input max="1" min="0" step="0.01" type="range" value="0.26" />
+                  <strong>0.26</strong>
+                </label>
+              </article>
+
+              <article class="visual-drum-pad-card">
+                <div class="visual-drum-pad-card-header">
+                  <label>
+                    <input checked type="checkbox" />
+                    <span>Right XY</span>
+                  </label>
+                  <strong>Color Shift</strong>
+                </div>
+                <label class="visual-drum-pad-target">
+                  <span>Target</span>
+                  <select aria-label="Right XY target">
+                    <option>Auto</option>
+                  </select>
+                </label>
+                <div class="visual-drum-pad-xy-targets">
+                  <label class="visual-drum-pad-target">
+                    <span>X Axis</span>
+                    <select aria-label="Right XY X axis">
+                      <option>Auto: Pulse</option>
+                    </select>
+                  </label>
+                  <label class="visual-drum-pad-target">
+                    <span>Y Axis</span>
+                    <select aria-label="Right XY Y axis">
+                      <option>Auto: Hue Drift</option>
+                    </select>
+                  </label>
+                </div>
+                <label class="visual-drum-pad-range">
+                  <span>Value</span>
+                  <input max="1" min="0" step="0.01" type="range" value="0.54" />
+                  <strong>0.54</strong>
+                </label>
+                <label class="visual-drum-pad-range">
+                  <span>Strike</span>
+                  <input max="1" min="0" step="0.01" type="range" value="0.32" />
+                  <strong>0.32</strong>
+                </label>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section id="output" class="output-band" aria-labelledby="output-title">
         <div class="section-heading output-heading">
           <p class="eyebrow">Output composition</p>
@@ -131,6 +413,29 @@
             <span class="mode-kicker">Mode 01</span>
             <h3>Shader only</h3>
             <p>Send the generated shader visual as a clean Syphon or Spout source.</p>
+            <div class="mode-infographic mode-infographic-addon mode-shader-only" aria-hidden="true">
+              <div class="infographic-stage" aria-hidden="true">
+                <div class="mode-node input-node">Shader Player</div>
+                <div class="shader-vortex">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="uniform-card">
+                  <span>fvMotion</span>
+                  <i style="--level: 82%"></i>
+                  <span>fvFace</span>
+                  <i style="--level: 64%"></i>
+                  <span>fvGestures</span>
+                  <i style="--level: 90%"></i>
+                </div>
+                <div class="mode-output-bus">
+                  <span>Syphon</span>
+                  <span>Spout</span>
+                </div>
+              </div>
+            </div>
           </article>
           <article class="output-mode">
             <div class="mode-preview">
@@ -143,6 +448,35 @@
             <span class="mode-kicker">Mode 02</span>
             <h3>Shader + wireframe</h3>
             <p>Composite gesture tracking lines over the shader for a mocap-forward look.</p>
+            <div class="mode-infographic mode-infographic-addon mode-shader-wire" aria-hidden="true">
+              <div class="infographic-stage" aria-hidden="true">
+                <div class="mode-node input-node">Mocap Signals</div>
+                <div class="shader-vortex compact">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <div class="wire-rig">
+                  <span class="joint head"></span>
+                  <span class="joint neck"></span>
+                  <span class="joint hand-left"></span>
+                  <span class="joint hand-right"></span>
+                  <span class="joint hip-left"></span>
+                  <span class="joint hip-right"></span>
+                  <i class="bone spine"></i>
+                  <i class="bone shoulder"></i>
+                  <i class="bone arm-left"></i>
+                  <i class="bone arm-right"></i>
+                  <i class="bone leg-left"></i>
+                  <i class="bone leg-right"></i>
+                </div>
+                <div class="gesture-tags">
+                  <span>Smile</span>
+                  <span>Pinch</span>
+                  <span>Hands up</span>
+                </div>
+              </div>
+            </div>
           </article>
           <article class="output-mode">
             <div class="mode-preview">
@@ -155,6 +489,37 @@
             <span class="mode-kicker">Mode 03</span>
             <h3>Shader + wireframe + camera</h3>
             <p>Send the full performance feed with camera, tracking, and effects together.</p>
+            <div class="mode-infographic mode-infographic-addon mode-full-composite" aria-hidden="true">
+              <div class="infographic-stage" aria-hidden="true">
+                <div class="camera-silhouette">
+                  <span></span>
+                </div>
+                <div class="composite-layers">
+                  <span>Camera</span>
+                  <span>Wireframe</span>
+                  <span>Shader FX</span>
+                </div>
+                <div class="wire-rig small">
+                  <span class="joint head"></span>
+                  <span class="joint neck"></span>
+                  <span class="joint hand-left"></span>
+                  <span class="joint hand-right"></span>
+                  <span class="joint hip-left"></span>
+                  <span class="joint hip-right"></span>
+                  <i class="bone spine"></i>
+                  <i class="bone shoulder"></i>
+                  <i class="bone arm-left"></i>
+                  <i class="bone arm-right"></i>
+                  <i class="bone leg-left"></i>
+                  <i class="bone leg-right"></i>
+                </div>
+                <div class="mode-output-bus full">
+                  <span>Syphon</span>
+                  <span>Spout</span>
+                  <span>NDI</span>
+                </div>
+              </div>
+            </div>
           </article>
         </div>
       </section>
@@ -176,32 +541,37 @@
             <strong>$5</strong>
             <p>Remove the watermark and use the app in live performance outputs.</p>
             <button class="button button-primary" type="button" data-checkout-button>Buy License</button>
+            <a class="purchase-helper" href="./recover/">Already purchased? Recover your download</a>
           </article>
         </div>
       </section>
 
       <section id="download" class="content-section download-section" aria-labelledby="download-title">
-        <div class="section-heading">
-          <p class="eyebrow">First release</p>
-          <h2 id="download-title">Download links are ready for builds.</h2>
-          <p>
-            The page is wired for platform downloads. Drop release files into your delivery service,
-            then replace these links with the final URLs.
-          </p>
-        </div>
-        <div class="download-grid">
-          <a class="download-row" href="https://infinightcapture.com/download/mac" data-placeholder-link>
-            <span>macOS Apple Silicon</span>
-            <strong>DMG demo</strong>
-          </a>
-          <a class="download-row" href="https://infinightcapture.com/download/windows" data-placeholder-link>
-            <span>Windows x64</span>
-            <strong>ZIP demo</strong>
-          </a>
-          <a class="download-row" href="https://github.com/" data-placeholder-link>
-            <span>Release notes</span>
-            <strong>GitHub</strong>
-          </a>
+        <div class="download-panel">
+          <div class="download-copy">
+            <p class="eyebrow">Free demo</p>
+            <h2 id="download-title">Download the demo first.</h2>
+            <p>
+              Try the full capture workflow for free with a watermark on output. No checkout needed.
+            </p>
+            <div class="download-actions" aria-label="Demo downloads">
+              <a class="button button-primary" href="/download/mac">
+                Download macOS Demo
+              </a>
+              <a class="button button-secondary" href="/download/windows">
+                Download Windows Demo
+              </a>
+            </div>
+          </div>
+          <aside class="paid-download-card" aria-label="Paid download access">
+            <span class="plan-label">Full license</span>
+            <strong>Paid downloads unlock after checkout.</strong>
+            <p>
+              Buy once to get private no-watermark installers on the confirmation page and by email.
+            </p>
+            <button class="button button-primary" type="button" data-checkout-button>Buy License</button>
+            <a class="purchase-helper" href="./recover/">Already purchased? Recover your download</a>
+          </aside>
         </div>
       </section>
     </main>
@@ -212,6 +582,6 @@
     </footer>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./main.js" type="module"></script>
+    <script src="./main.js?v=download-flow-20260614" type="module"></script>
   </body>
 </html>

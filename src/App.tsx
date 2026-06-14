@@ -71,6 +71,7 @@ import {
 } from "./rendering/shaderPlayer";
 import {
   getSystemStatus,
+  openExternalUrl,
   publishSystemOutputFrame,
   requestSystemCameraAccess,
   startSystemOutput,
@@ -320,6 +321,8 @@ const outputCompositionModes: Array<{
     includeCameraFeed: true
   }
 ];
+
+const watermarkUpgradeUrl = "https://infinightcapture.com/#pricing";
 
 const defaultSignalNodePositions: Record<SignalNodeId, SignalNodePosition> = {
   camera: { x: 5, y: 12 },
@@ -1464,6 +1467,10 @@ export function App() {
     await stopSystemOutput(outputTargetRef.current);
     setIsOutputStreaming(false);
     setSystemStatus(await getSystemStatus());
+  }, []);
+
+  const openWatermarkUpgrade = useCallback(() => {
+    void openExternalUrl(watermarkUpgradeUrl);
   }, []);
 
   const executeGestureActionRoutes = useCallback((controls: MotionFrame["gestureControls"]) => {
@@ -3001,6 +3008,19 @@ export function App() {
               <RadioTower size={16} />
               Start {selectedOutput?.label ?? "Native"} Output
             </button>
+          )}
+          {isDemoEdition && (
+            <div className="demo-upgrade-card">
+              <div>
+                <span>{demoWatermarkLabel}</span>
+                <strong>Remove the watermark</strong>
+                <p>Upgrade to the full build for clean captures and native output.</p>
+              </div>
+              <button className="demo-upgrade-button" onClick={openWatermarkUpgrade} type="button">
+                <Crown size={15} />
+                Upgrade for $5
+              </button>
+            </div>
           )}
           <div className="output-composition-options" role="group" aria-label="Output composition">
             {outputCompositionModes.map((compositionMode) => (

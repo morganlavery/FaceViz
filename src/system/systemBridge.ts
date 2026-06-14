@@ -126,3 +126,12 @@ export const publishSystemOutputFrame = async (
 
   return window.infinightCaptureSystem.publishOutputFrame(target, frame);
 };
+
+export const openExternalUrl = (url: string) => {
+  if (!window.infinightCaptureSystem) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return Promise.resolve({ ok: true });
+  }
+
+  return window.infinightCaptureSystem.openExternalUrl(url);
+};

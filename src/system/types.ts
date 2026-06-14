@@ -92,4 +92,5 @@ export type INFINIGHTCaptureSystemBridge = {
     target: OutputTarget,
     frame: { width: number; height: number; pixels: ArrayBuffer }
   ) => Promise<{ ok: boolean; target: OutputTarget; reason?: string }>;
+  openExternalUrl: (url: string) => Promise<{ ok: boolean; reason?: string }>;
 };

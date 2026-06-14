@@ -1,4 +1,8 @@
 const DEFAULT_SITE_URL = "https://infinightcapture.com";
+const DEFAULT_STRIPE_PRICE_ID = "price_1TiD1bHRHfZdckNqGRr8SbBV";
+const DEFAULT_STRIPE_PRODUCT_ID = "prod_UhcGyJcNr4E0xd";
+const DEFAULT_STRIPE_CURRENCY = "usd";
+const DEFAULT_STRIPE_UNIT_AMOUNT = "500";
 
 function json(data, init = {}) {
   return Response.json(data, {
@@ -11,7 +15,10 @@ function json(data, init = {}) {
 }
 
 export async function onRequestPost({ env, request }) {
-  if (!env.STRIPE_SECRET_KEY || (!env.STRIPE_PRICE_ID && !env.STRIPE_PRODUCT_ID)) {
+  const stripePriceId = env.STRIPE_PRICE_ID || DEFAULT_STRIPE_PRICE_ID;
+  const stripeProductId = env.STRIPE_PRODUCT_ID || DEFAULT_STRIPE_PRODUCT_ID;
+
+  if (!env.STRIPE_SECRET_KEY || (!stripePriceId && !stripeProductId)) {
     return json({ error: "Checkout is not configured yet." }, { status: 503 });
   }
 
@@ -27,12 +34,12 @@ export async function onRequestPost({ env, request }) {
     "metadata[edition]": "paid"
   });
 
-  if (env.STRIPE_PRICE_ID) {
-    params.set("line_items[0][price]", env.STRIPE_PRICE_ID);
+  if (stripePriceId) {
+    params.set("line_items[0][price]", stripePriceId);
   } else {
-    params.set("line_items[0][price_data][currency]", env.STRIPE_CURRENCY || "usd");
-    params.set("line_items[0][price_data][product]", env.STRIPE_PRODUCT_ID);
-    params.set("line_items[0][price_data][unit_amount]", env.STRIPE_UNIT_AMOUNT || "500");
+    params.set("line_items[0][price_data][currency]", env.STRIPE_CURRENCY || DEFAULT_STRIPE_CURRENCY);
+    params.set("line_items[0][price_data][product]", stripeProductId);
+    params.set("line_items[0][price_data][unit_amount]", env.STRIPE_UNIT_AMOUNT || DEFAULT_STRIPE_UNIT_AMOUNT);
   }
 
   if (env.STRIPE_AUTOMATIC_TAX === "true") {

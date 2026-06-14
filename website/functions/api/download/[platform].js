@@ -1,3 +1,5 @@
+import { json, savePaidCheckoutSession, verifyDownloadToken } from "../../_shared/purchases.js";
+
 const DOWNLOADS = {
   mac: {
     envKey: "PAID_MAC_OBJECT_KEY",
@@ -12,16 +14,6 @@ const DOWNLOADS = {
     filename: "INFINIGHTCapture-Paid-Setup-0.1.0-win-x64.exe"
   }
 };
-
-function json(data, init = {}) {
-  return Response.json(data, {
-    headers: {
-      "Cache-Control": "no-store",
-      ...(init.headers || {})
-    },
-    status: init.status || 200
-  });
-}
 
 async function getCheckoutSession(env, sessionId) {
   const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
@@ -49,13 +41,26 @@ export async function onRequestGet({ env, params, request }) {
 
   const url = new URL(request.url);
   const sessionId = url.searchParams.get("session_id");
-  if (!sessionId) {
-    return json({ error: "Missing checkout session." }, { status: 401 });
+  const token = url.searchParams.get("token");
+  let authorized = false;
+
+  if (token) {
+    const tokenResult = await verifyDownloadToken(env, token);
+    if (!tokenResult.ok) {
+      return json({ error: tokenResult.reason || "Invalid download link." }, { status: 403 });
+    }
+    authorized = true;
+  } else if (sessionId) {
+    const session = await getCheckoutSession(env, sessionId);
+    if (!session || session.payment_status !== "paid" || session.mode !== "payment") {
+      return json({ error: "Payment has not been completed." }, { status: 403 });
+    }
+    await savePaidCheckoutSession(env, session);
+    authorized = true;
   }
 
-  const session = await getCheckoutSession(env, sessionId);
-  if (!session || session.payment_status !== "paid" || session.mode !== "payment") {
-    return json({ error: "Payment has not been completed." }, { status: 403 });
+  if (!authorized) {
+    return json({ error: "Missing checkout session or download token." }, { status: 401 });
   }
 
   const objectKey = env[download.envKey] || download.fallbackKey;
