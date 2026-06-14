@@ -103,8 +103,9 @@ import type {
 
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
-type WorkspaceTab = "preview" | "shader" | "mapping" | "signal";
+type WorkspaceTab = "preview" | "shader" | "pads" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
+type PerformanceLayerMode = "wireframe" | "pads" | "xy";
 type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
 type RailSectionId = "output" | "system" | "shader" | "effects" | "face" | "tracking";
@@ -222,6 +223,7 @@ const effects = [
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Preview" },
   { id: "shader", label: "Shader" },
+  { id: "pads", label: "Pads" },
   { id: "mapping", label: "Mapping" },
   { id: "signal", label: "Signal" }
 ];
@@ -229,6 +231,7 @@ const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
 const workspaceTabIcons: Record<WorkspaceTab, typeof Activity> = {
   preview: ScanFace,
   shader: Sparkles,
+  pads: Hand,
   mapping: SlidersHorizontal,
   signal: Activity
 };
@@ -238,6 +241,12 @@ const trackingPreviewModes: Array<{ id: TrackingPreviewMode; label: string; hudL
   { id: "full", label: "Full Body", hudLabel: "Full Body", icon: Expand },
   { id: "face", label: "Face Gestures", hudLabel: "Face Gestures", icon: Smile },
   { id: "handsFace", label: "Hands + Face", hudLabel: "Hands + Face", icon: Hand }
+];
+
+const performanceLayerModes: Array<{ id: PerformanceLayerMode; label: string; hudLabel: string; icon: typeof Activity }> = [
+  { id: "wireframe", label: "Wireframe", hudLabel: "Wireframe", icon: ScanFace },
+  { id: "pads", label: "Drum Pads", hudLabel: "Pad Mode", icon: Hand },
+  { id: "xy", label: "XY Boxes", hudLabel: "XY Mode", icon: SlidersHorizontal }
 ];
 
 const defaultShaderImportSource = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -417,6 +426,23 @@ const visualDrumPadSets: Array<{
   }
 ];
 const visualDrumPadSetIds = new Set<VisualDrumPadSetId>(visualDrumPadSets.map((set) => set.id));
+const getPerformanceVisualDrumPadSet = (
+  performanceMode: PerformanceLayerMode,
+  setId: VisualDrumPadSetId
+) => {
+  if (performanceMode === "pads") {
+    return visualDrumPadSets.find((set) => set.id === "sixPads") ?? visualDrumPadSets[0];
+  }
+
+  const selectedSet = visualDrumPadSets.find((set) => set.id === setId) ?? visualDrumPadSets[0];
+  if (performanceMode === "xy") {
+    return selectedSet.xyEnabled
+      ? selectedSet
+      : visualDrumPadSets.find((set) => set.id === "sixPadsXy") ?? selectedSet;
+  }
+
+  return selectedSet;
+};
 const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = Array.from(
   { length: VISUAL_DRUM_PAD_COUNT },
   (_, index) => {
@@ -1057,6 +1083,7 @@ export function App() {
   const gestureActionMatrixRef = useRef<GestureActionRoute[]>(createDefaultGestureActionMatrix());
   const visualDrumPadsRef = useRef<VisualDrumPadMapping[]>(createDefaultVisualDrumPads());
   const visualDrumPadSetRef = useRef<VisualDrumPadSetId>("sixPads");
+  const performanceLayerModeRef = useRef<PerformanceLayerMode>("wireframe");
   const visualDrumPadRuntimeRef = useRef<Record<string, VisualDrumPadRuntime>>({});
   const visualDrumPadInsideRef = useRef<Set<string>>(new Set());
   const visualDrumPadOverlayRef = useRef<VisualDrumPadOverlayPad[]>([]);
@@ -1093,7 +1120,8 @@ export function App() {
   const [fps, setFps] = useState(0);
   const [latency, setLatency] = useState(0);
   const [mode, setMode] = useState<TrackingPreviewMode>("upper");
-  const [showRig, setShowRig] = useState(true);
+  const [performanceLayerMode, setPerformanceLayerMode] = useState<PerformanceLayerMode>("wireframe");
+  const showRig = performanceLayerMode === "wireframe";
   const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
@@ -1152,6 +1180,7 @@ export function App() {
       return "sixPads";
     }
   });
+  const [selectedVisualPadId, setSelectedVisualPadId] = useState("pad-1");
   const [gestureActionNotice, setGestureActionNotice] = useState("");
   const [importedShaderScenes, setImportedShaderScenes] = useState<ShaderScene[]>(() => {
     try {
@@ -1219,6 +1248,8 @@ export function App() {
     [activeShaderScene, motion, shaderSettings]
   );
   const activeTrackingMode = trackingPreviewModes.find((previewMode) => previewMode.id === mode) ?? trackingPreviewModes[0];
+  const activePerformanceLayerMode =
+    performanceLayerModes.find((performanceMode) => performanceMode.id === performanceLayerMode) ?? performanceLayerModes[0];
   const appShellStyle = {
     "--control-rail-width": `${workspaceLayout.railWidth}px`,
     "--stage-panel-height": `${workspaceLayout.stageHeight}px`
@@ -1403,7 +1434,15 @@ export function App() {
   const updateVisualDrumPadOverlay = useCallback((now = performance.now()) => {
     const scene = activeShaderSceneRef.current;
     const settings = shaderSettingsRef.current;
-    const padSet = visualDrumPadSets.find((set) => set.id === visualDrumPadSetRef.current) ?? visualDrumPadSets[0];
+    const performanceMode = performanceLayerModeRef.current;
+    if (performanceMode === "wireframe") {
+      visualDrumPadOverlayRef.current = [];
+      compositorOptionsRef.current.visualDrumPads = [];
+      outputCompositorOptionsRef.current.visualDrumPads = [];
+      return;
+    }
+
+    const padSet = getPerformanceVisualDrumPadSet(performanceMode, visualDrumPadSetRef.current);
     const runtime = visualDrumPadRuntimeRef.current;
     visualDrumPadOverlayRef.current = visualDrumPadsRef.current.map((pad, index) => {
       const padRuntime = runtime[pad.id] ?? createVisualDrumPadRuntime();
@@ -1470,9 +1509,10 @@ export function App() {
 
   const processVisualDrumPadHits = useCallback((nextMotion: MotionFrame) => {
     const scene = activeShaderSceneRef.current;
-    const padSet = visualDrumPadSets.find((set) => set.id === visualDrumPadSetRef.current) ?? visualDrumPadSets[0];
+    const performanceMode = performanceLayerModeRef.current;
+    const padSet = getPerformanceVisualDrumPadSet(performanceMode, visualDrumPadSetRef.current);
     const pads = visualDrumPadsRef.current;
-    if (scene.parameters.length === 0 || pads.every((pad) => !pad.enabled)) {
+    if (performanceMode === "wireframe" || scene.parameters.length === 0 || pads.every((pad) => !pad.enabled)) {
       visualDrumPadInsideRef.current = new Set();
       visualDrumPadStrikeSamplesRef.current = new Map();
       visualDrumPadRuntimeRef.current = Object.fromEntries(
@@ -1945,6 +1985,18 @@ export function App() {
   }, [updateVisualDrumPadOverlay, visualDrumPadSetId]);
 
   useEffect(() => {
+    performanceLayerModeRef.current = performanceLayerMode;
+    if (performanceLayerMode === "wireframe") {
+      visualDrumPadInsideRef.current = new Set();
+      visualDrumPadStrikeSamplesRef.current = new Map();
+      visualDrumPadRuntimeRef.current = Object.fromEntries(
+        Object.entries(visualDrumPadRuntimeRef.current).map(([padId, runtime]) => [padId, { ...runtime, active: false }])
+      );
+    }
+    updateVisualDrumPadOverlay();
+  }, [performanceLayerMode, updateVisualDrumPadOverlay]);
+
+  useEffect(() => {
     activeShaderSceneRef.current = activeShaderScene;
   }, [activeShaderScene]);
 
@@ -1972,7 +2024,7 @@ export function App() {
       visualDrumPads: visualDrumPadOverlayRef.current
     };
     outputCompositorOptionsRef.current = {
-      showRig: selectedOutputComposition.showRig,
+      showRig: selectedOutputComposition.showRig && performanceLayerMode === "wireframe",
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
       selectedEffect,
       includeCameraFeed: selectedOutputComposition.includeCameraFeed,
@@ -1992,6 +2044,7 @@ export function App() {
     shaderSettings,
     showRig,
     mode,
+    performanceLayerMode,
     visualMode
   ]);
 
@@ -2271,7 +2324,116 @@ export function App() {
     visualDrumPadRuntimeRef.current = {};
     visualDrumPadInsideRef.current = new Set();
     visualDrumPadStrikeSamplesRef.current = new Map();
+    setSelectedVisualPadId("pad-1");
   }, []);
+
+  const applyManualVisualDrumPadControl = useCallback((padId: string, point: { x: number; y: number }, strike: boolean) => {
+    const pads = visualDrumPadsRef.current;
+    const index = pads.findIndex((candidate) => candidate.id === padId);
+    const pad = pads[index];
+    const scene = activeShaderSceneRef.current;
+    if (!pad?.enabled || scene.parameters.length === 0) return;
+
+    const performanceMode = performanceLayerModeRef.current;
+    if (performanceMode === "wireframe") return;
+
+    const padSet = getPerformanceVisualDrumPadSet(performanceMode, visualDrumPadSetRef.current);
+    const xyX = clampNumber(point.x);
+    const xyY = clampNumber(point.y);
+    const timestamp = performance.now();
+    const parameter = getVisualDrumPadParameter(scene, pad, index);
+    const xParameter = getVisualDrumPadXParameter(scene, pad, index);
+    const yParameter = getVisualDrumPadYParameter(scene, pad, index);
+    const zone = padSet.zoneEnabled ? getVisualDrumPadZone(xyX, xyY) : "center";
+    const parameterUpdates: Array<{ parameter: ShaderParameterDefinition; value: number }> = [];
+
+    if (padSet.xyEnabled) {
+      if (xParameter) {
+        parameterUpdates.push({
+          parameter: xParameter,
+          value: xParameter.min + xyX * (xParameter.max - xParameter.min)
+        });
+      }
+      if (yParameter) {
+        parameterUpdates.push({
+          parameter: yParameter,
+          value: yParameter.min + (1 - xyY) * (yParameter.max - yParameter.min)
+        });
+      }
+    }
+
+    if (parameter && padSet.zoneEnabled && zone !== "center") {
+      const zoneValue = getVisualDrumPadZoneValue(zone, pad.value, timestamp, 0.9);
+      parameterUpdates.push({
+        parameter,
+        value: parameter.min + zoneValue * (parameter.max - parameter.min)
+      });
+    }
+
+    if (parameter && strike) {
+      parameterUpdates.push({
+        parameter,
+        value: parameter.min + pad.value * (parameter.max - parameter.min)
+      });
+    }
+
+    const previousRuntime = visualDrumPadRuntimeRef.current[pad.id] ?? createVisualDrumPadRuntime();
+    visualDrumPadRuntimeRef.current[pad.id] = {
+      ...previousRuntime,
+      active: true,
+      holdStartedAt: previousRuntime.active ? previousRuntime.holdStartedAt : timestamp,
+      intensity: strike ? 1 : Math.max(previousRuntime.intensity, 0.48),
+      lastHitAt: strike ? timestamp : previousRuntime.lastHitAt,
+      pressure: padSet.pressureEnabled ? Math.max(previousRuntime.pressure, strike ? 1 : 0.66) : previousRuntime.pressure,
+      pressureVelocity: padSet.pressureEnabled ? (strike ? 1 : 0.28) : previousRuntime.pressureVelocity,
+      zone,
+      zoneEnteredAt: previousRuntime.zone === zone ? previousRuntime.zoneEnteredAt : timestamp,
+      xyX,
+      xyY
+    };
+
+    if (parameterUpdates.length > 0) {
+      setShaderSettings((current) => {
+        let changed = false;
+        const next = { ...current };
+        for (const update of parameterUpdates) {
+          const currentSetting = next[update.parameter.id] ?? {
+            value: update.parameter.defaultValue,
+            source: update.parameter.motionDefault,
+            depth: 0
+          };
+          if (
+            currentSetting.source === "manual" &&
+            currentSetting.depth === 0 &&
+            Math.abs(currentSetting.value - update.value) < 0.005
+          ) {
+            continue;
+          }
+          changed = true;
+          next[update.parameter.id] = {
+            ...currentSetting,
+            value: update.value,
+            source: "manual",
+            depth: 0
+          };
+        }
+        return changed ? next : current;
+      });
+    }
+
+    updateVisualDrumPadOverlay(timestamp);
+  }, [updateVisualDrumPadOverlay]);
+
+  const releaseManualVisualDrumPadControl = useCallback((padId: string) => {
+    const runtime = visualDrumPadRuntimeRef.current[padId];
+    if (!runtime) return;
+
+    visualDrumPadRuntimeRef.current[padId] = {
+      ...runtime,
+      active: false
+    };
+    updateVisualDrumPadOverlay();
+  }, [updateVisualDrumPadOverlay]);
 
   const exportGestureActionMatrix = useCallback(() => {
     const preset: GestureActionMatrixPreset = {
@@ -2310,7 +2472,7 @@ export function App() {
     if (tab === "preview") {
       setVisualMode("camera");
     }
-    if (tab === "shader" || tab === "mapping") {
+    if (tab === "shader" || tab === "pads" || tab === "mapping") {
       setVisualMode("shader");
     }
   }, []);
@@ -2406,7 +2568,7 @@ export function App() {
             </div>
             <div className="hud-badge align-right">
               <span>Mode</span>
-              <strong>{visualMode === "shader" ? "Mocap Shader" : activeTrackingMode.hudLabel}</strong>
+              <strong>{activePerformanceLayerMode.hudLabel}</strong>
             </div>
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
@@ -2462,6 +2624,23 @@ export function App() {
                   Start
                 </button>
               )}
+            </section>
+
+            <section className="performance-layer-row" aria-label="Performance layer mode">
+              {performanceLayerModes.map((performanceMode) => {
+                const ModeIcon = performanceMode.icon;
+                return (
+                  <button
+                    className={performanceLayerMode === performanceMode.id ? "performance-layer-button active" : "performance-layer-button"}
+                    key={performanceMode.id}
+                    onClick={() => setPerformanceLayerMode(performanceMode.id)}
+                    type="button"
+                  >
+                    <ModeIcon size={16} />
+                    <span>{performanceMode.label}</span>
+                  </button>
+                );
+              })}
             </section>
 
             {error && (
@@ -2533,7 +2712,24 @@ export function App() {
               </section>
             )}
 
-            {(activeWorkspace === "shader" || activeWorkspace === "mapping") && (
+            {activeWorkspace === "pads" && (
+              <VisualControlSurface
+                activeScene={activeShaderScene}
+                motion={motion}
+                onManualControl={applyManualVisualDrumPadControl}
+                onManualRelease={releaseManualVisualDrumPadControl}
+                onReset={resetVisualDrumPads}
+                onSelectPad={setSelectedVisualPadId}
+                onSetChange={setVisualDrumPadSetId}
+                onUpdate={updateVisualDrumPad}
+                pads={visualDrumPads}
+                selectedPadId={selectedVisualPadId}
+                setId={visualDrumPadSetId}
+                shaderValues={shaderValues}
+              />
+            )}
+
+            {(activeWorkspace === "shader" || activeWorkspace === "pads" || activeWorkspace === "mapping") && (
               <section className="shader-parameter-dock" aria-label="Shader parameters">
                 <div className="shader-parameter-dock-header">
                   <div>
@@ -2875,10 +3071,10 @@ export function App() {
           onToggle={() => toggleRailSection("tracking")}
           title="Tracking"
         >
-          <label className="toggle-row">
-            <span>Preview wireframe</span>
-            <input type="checkbox" checked={showRig} onChange={(event) => setShowRig(event.target.checked)} />
-          </label>
+          <div className="tracking-mode-readout">
+            <span>Performance layer</span>
+            <strong>{activePerformanceLayerMode.label}</strong>
+          </div>
           <div className="gesture-stack">
             {activeGestures.map((gesture) => (
               <span key={gesture} className="gesture-token">
@@ -3433,6 +3629,275 @@ type VisualDrumPadEditorProps = {
   pads: VisualDrumPadMapping[];
   setId: VisualDrumPadSetId;
 };
+
+type VisualControlSurfaceProps = {
+  activeScene: ShaderScene;
+  motion: MotionFrame | null;
+  onManualControl: (padId: string, point: { x: number; y: number }, strike: boolean) => void;
+  onManualRelease: (padId: string) => void;
+  onReset: () => void;
+  onSelectPad: (padId: string) => void;
+  onSetChange: (setId: VisualDrumPadSetId) => void;
+  onUpdate: (padId: string, patch: Partial<VisualDrumPadMapping>) => void;
+  pads: VisualDrumPadMapping[];
+  selectedPadId: string;
+  setId: VisualDrumPadSetId;
+  shaderValues: number[];
+};
+
+function VisualControlSurface({
+  activeScene,
+  motion,
+  onManualControl,
+  onManualRelease,
+  onReset,
+  onSelectPad,
+  onSetChange,
+  onUpdate,
+  pads,
+  selectedPadId,
+  setId,
+  shaderValues
+}: VisualControlSurfaceProps) {
+  const activeSet = visualDrumPadSets.find((set) => set.id === setId) ?? visualDrumPadSets[0];
+  const selectedIndex = Math.max(0, pads.findIndex((pad) => pad.id === selectedPadId));
+  const selectedPad = pads[selectedIndex] ?? pads[0];
+  const [surfacePoint, setSurfacePoint] = useState({ x: 0.5, y: 0.5 });
+  const selectedParameter = selectedPad ? getVisualDrumPadParameter(activeScene, selectedPad, selectedIndex) : undefined;
+  const selectedXParameter = selectedPad ? getVisualDrumPadXParameter(activeScene, selectedPad, selectedIndex) : undefined;
+  const selectedYParameter = selectedPad ? getVisualDrumPadYParameter(activeScene, selectedPad, selectedIndex) : undefined;
+  const selectedValueIndex = selectedParameter
+    ? activeScene.parameters.findIndex((parameter) => parameter.id === selectedParameter.id)
+    : -1;
+  const selectedValue = selectedValueIndex >= 0 ? shaderValues[selectedValueIndex] : selectedParameter?.defaultValue ?? 0;
+  const liveHands = motion?.hands.length ?? 0;
+  const liveFace = motion?.face ? "Face" : "No face";
+
+  useEffect(() => {
+    setSurfacePoint({ x: 0.5, y: 0.5 });
+  }, [selectedPad?.id]);
+
+  const readSurfacePoint = (event: ReactPointerEvent<HTMLElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return {
+      x: clampNumber((event.clientX - rect.left) / Math.max(1, rect.width)),
+      y: clampNumber((event.clientY - rect.top) / Math.max(1, rect.height))
+    };
+  };
+
+  const updateSurface = (event: ReactPointerEvent<HTMLElement>, strike: boolean) => {
+    if (!selectedPad) return;
+    const point = readSurfacePoint(event);
+    setSurfacePoint(point);
+    onManualControl(selectedPad.id, point, strike);
+  };
+
+  return (
+    <section className="visual-control-workspace" aria-label="XY boxes and visual drum pads">
+      <div className="visual-control-header">
+        <div>
+          <p className="eyebrow">Control Surface</p>
+          <h2>{activeScene.label}</h2>
+        </div>
+        <div className="visual-control-live">
+          <span>{liveHands}/2 hands</span>
+          <strong>{liveFace}</strong>
+        </div>
+      </div>
+
+      <div className="visual-control-layout">
+        <div className="xy-performance-panel">
+          <div className="xy-performance-header">
+            <div>
+              <span>XY Box</span>
+              <strong>{selectedPad?.label ?? "Pad"}</strong>
+            </div>
+            <div>
+              <span>Target</span>
+              <strong>{selectedParameter?.label ?? "None"}</strong>
+            </div>
+          </div>
+          <div
+            className={activeSet.xyEnabled ? "xy-performance-pad" : "xy-performance-pad muted"}
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture(event.pointerId);
+              updateSurface(event, true);
+            }}
+            onPointerMove={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                updateSurface(event, false);
+              }
+            }}
+            onPointerUp={(event) => {
+              if (selectedPad) onManualRelease(selectedPad.id);
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            onPointerCancel={(event) => {
+              if (selectedPad) onManualRelease(selectedPad.id);
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+              }
+            }}
+            role="application"
+            style={{
+              "--xy-control-x": `${surfacePoint.x * 100}%`,
+              "--xy-control-y": `${surfacePoint.y * 100}%`
+            } as CSSProperties}
+          >
+            <div className="xy-performance-cursor" aria-hidden="true" />
+            <div className="xy-performance-axis x" aria-hidden="true" />
+            <div className="xy-performance-axis y" aria-hidden="true" />
+          </div>
+          <div className="xy-readout-grid">
+            <div>
+              <span>X Axis</span>
+              <strong>{activeSet.xyEnabled ? selectedXParameter?.label ?? "None" : "Off"}</strong>
+            </div>
+            <div>
+              <span>Y Axis</span>
+              <strong>{activeSet.xyEnabled ? selectedYParameter?.label ?? "None" : "Off"}</strong>
+            </div>
+            <div>
+              <span>Value</span>
+              <strong>{selectedValue.toFixed(2)}</strong>
+            </div>
+            <div>
+              <span>Set</span>
+              <strong>{activeSet.detail}</strong>
+            </div>
+          </div>
+        </div>
+
+        <div className="visual-pad-bank">
+          <div className="visual-pad-toolbar">
+            <div className="visual-pad-set-tabs" aria-label="Visual drum pad sets">
+              {visualDrumPadSets.map((set) => (
+                <button
+                  className={set.id === setId ? "active" : ""}
+                  key={set.id}
+                  onClick={() => onSetChange(set.id)}
+                  type="button"
+                >
+                  <span>{set.label}</span>
+                  <strong>{set.detail}</strong>
+                </button>
+              ))}
+            </div>
+            <button className="visual-pad-reset" onClick={onReset} type="button">Reset</button>
+          </div>
+
+          <div className="visual-pad-strike-grid">
+            {pads.map((pad, index) => {
+              const parameter = getVisualDrumPadParameter(activeScene, pad, index);
+              const isSelected = pad.id === selectedPad?.id;
+              return (
+                <button
+                  className={[
+                    "visual-pad-strike",
+                    isSelected ? "selected" : "",
+                    pad.enabled ? "" : "muted"
+                  ].filter(Boolean).join(" ")}
+                  key={pad.id}
+                  onClick={() => onSelectPad(pad.id)}
+                  onPointerDown={() => {
+                    onSelectPad(pad.id);
+                    onManualControl(pad.id, { x: 0.5, y: 0.5 }, true);
+                  }}
+                  onPointerUp={() => onManualRelease(pad.id)}
+                  onPointerCancel={() => onManualRelease(pad.id)}
+                  type="button"
+                >
+                  <span>{pad.label}</span>
+                  <strong>{parameter?.label ?? "None"}</strong>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedPad && (
+            <div className="visual-pad-selected-editor">
+              <div className="visual-pad-selected-header">
+                <label>
+                  <input
+                    checked={selectedPad.enabled}
+                    onChange={(event) => onUpdate(selectedPad.id, { enabled: event.target.checked })}
+                    type="checkbox"
+                  />
+                  <span>{selectedPad.label}</span>
+                </label>
+                <strong>{selectedParameter?.label ?? "None"}</strong>
+              </div>
+              <label className="visual-pad-route-control">
+                <span>Strike Target</span>
+                <select
+                  value={activeScene.parameters.some((candidate) => candidate.id === selectedPad.parameterId) ? selectedPad.parameterId : ""}
+                  onChange={(event) => onUpdate(selectedPad.id, { parameterId: event.target.value })}
+                >
+                  <option value="">Auto: {selectedParameter?.label ?? "None"}</option>
+                  {activeScene.parameters.map((candidate) => (
+                    <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="visual-pad-route-pair">
+                <label className="visual-pad-route-control">
+                  <span>X Target</span>
+                  <select
+                    value={activeScene.parameters.some((candidate) => candidate.id === selectedPad.xParameterId) ? selectedPad.xParameterId : ""}
+                    onChange={(event) => onUpdate(selectedPad.id, { xParameterId: event.target.value })}
+                  >
+                    <option value="">Auto: {selectedXParameter?.label ?? "None"}</option>
+                    {activeScene.parameters.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="visual-pad-route-control">
+                  <span>Y Target</span>
+                  <select
+                    value={activeScene.parameters.some((candidate) => candidate.id === selectedPad.yParameterId) ? selectedPad.yParameterId : ""}
+                    onChange={(event) => onUpdate(selectedPad.id, { yParameterId: event.target.value })}
+                  >
+                    <option value="">Auto: {selectedYParameter?.label ?? "None"}</option>
+                    {activeScene.parameters.map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>{candidate.label}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <label className="visual-pad-range-control">
+                <span>Value</span>
+                <input
+                  max="1"
+                  min="0"
+                  onChange={(event) => onUpdate(selectedPad.id, { value: Number(event.target.value) })}
+                  step="0.01"
+                  type="range"
+                  value={selectedPad.value}
+                />
+                <strong>{selectedPad.value.toFixed(2)}</strong>
+              </label>
+              <label className="visual-pad-range-control">
+                <span>Strike</span>
+                <input
+                  max="1"
+                  min="0"
+                  onChange={(event) => onUpdate(selectedPad.id, { velocityThreshold: Number(event.target.value) })}
+                  step="0.01"
+                  type="range"
+                  value={selectedPad.velocityThreshold}
+                />
+                <strong>{selectedPad.velocityThreshold.toFixed(2)}</strong>
+              </label>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
 
 function VisualDrumPadEditor({ activeScene, onReset, onSetChange, onUpdate, pads, setId }: VisualDrumPadEditorProps) {
   const activeSet = visualDrumPadSets.find((set) => set.id === setId) ?? visualDrumPadSets[0];
