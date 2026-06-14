@@ -502,16 +502,22 @@ body.layout-resizing-stage * {
 }
 
 .viewer-motion-hud {
-  position: absolute;
-  z-index: 2;
-  right: 10px;
-  bottom: 10px;
-  left: 10px;
+  position: relative;
   display: grid;
   gap: 8px;
-  max-height: 48%;
-  overflow: hidden;
-  pointer-events: none;
+  align-self: start;
+  min-height: 142px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.26);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(var(--brand-blue-rgb), 0.08), transparent 48%),
+    rgba(3, 13, 20, 0.8);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    inset 0 0 24px rgba(var(--accent-rgb), 0.04);
 }
 
 .viewer-signal-row,
@@ -539,8 +545,7 @@ body.layout-resizing-stage * {
   border-radius: 8px;
   background:
     linear-gradient(135deg, rgba(var(--brand-blue-rgb), 0.1), transparent),
-    rgba(3, 13, 20, 0.78);
-  backdrop-filter: blur(8px);
+    rgba(3, 13, 20, 0.92);
 }
 
 .viewer-signal {
@@ -2959,7 +2964,7 @@ body.layout-resizing-stage * {
   }
 
   .viewer-motion-hud {
-    max-height: 31%;
+    max-height: 220px;
   }
 
   .viewer-signal-row,

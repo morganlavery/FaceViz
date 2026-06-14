@@ -370,6 +370,8 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
 const VISUAL_DRUM_PAD_COUNT = 6;
 const VISUAL_DRUM_PAD_COOLDOWN_MS = 180;
 const VISUAL_DRUM_PAD_TIP_INDICES = [8, 12, 16, 20];
+const VISUAL_DRUM_PAD_XY_COUNT = 2;
+const visualDrumPadXyLabels = ["Left XY", "Right XY"];
 const visualDrumPadSets: Array<{
   id: VisualDrumPadSetId;
   label: string;
@@ -443,6 +445,20 @@ const getPerformanceVisualDrumPadSet = (
 
   return selectedSet;
 };
+const isVisualDrumPadXyMode = (performanceMode: PerformanceLayerMode, setId: VisualDrumPadSetId) =>
+  getPerformanceVisualDrumPadSet(performanceMode, setId).xyEnabled;
+const getVisualDrumPadsForSet = (pads: VisualDrumPadMapping[], padSet: { xyEnabled: boolean }) =>
+  padSet.xyEnabled
+    ? pads.slice(0, VISUAL_DRUM_PAD_XY_COUNT).map((pad, index) => ({
+        ...pad,
+        label: visualDrumPadXyLabels[index] ?? pad.label
+      }))
+    : pads;
+const getPerformanceVisualDrumPads = (
+  pads: VisualDrumPadMapping[],
+  performanceMode: PerformanceLayerMode,
+  setId: VisualDrumPadSetId
+) => getVisualDrumPadsForSet(pads, getPerformanceVisualDrumPadSet(performanceMode, setId));
 const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = Array.from(
   { length: VISUAL_DRUM_PAD_COUNT },
   (_, index) => {
@@ -461,6 +477,22 @@ const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width
     };
   }
 );
+const visualDrumPadXyLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = [
+  {
+    x: 0.12,
+    y: 0.38,
+    width: 0.18,
+    height: 0.24
+  },
+  {
+    x: 0.88 - 0.18,
+    y: 0.38,
+    width: 0.18,
+    height: 0.24
+  }
+];
+const getPerformanceVisualDrumPadLayout = (performanceMode: PerformanceLayerMode, setId: VisualDrumPadSetId) =>
+  isVisualDrumPadXyMode(performanceMode, setId) ? visualDrumPadXyLayout : visualDrumPadLayout;
 
 const createDefaultVisualDrumPads = (): VisualDrumPadMapping[] =>
   Array.from({ length: VISUAL_DRUM_PAD_COUNT }, (_, index) => ({
@@ -1443,8 +1475,10 @@ export function App() {
     }
 
     const padSet = getPerformanceVisualDrumPadSet(performanceMode, visualDrumPadSetRef.current);
+    const activePads = getPerformanceVisualDrumPads(visualDrumPadsRef.current, performanceMode, visualDrumPadSetRef.current);
+    const activeLayout = getPerformanceVisualDrumPadLayout(performanceMode, visualDrumPadSetRef.current);
     const runtime = visualDrumPadRuntimeRef.current;
-    visualDrumPadOverlayRef.current = visualDrumPadsRef.current.map((pad, index) => {
+    visualDrumPadOverlayRef.current = activePads.map((pad, index) => {
       const padRuntime = runtime[pad.id] ?? createVisualDrumPadRuntime();
       const parameter = getVisualDrumPadParameter(scene, pad, index);
       const xParameter = getVisualDrumPadXParameter(scene, pad, index);
@@ -1454,7 +1488,7 @@ export function App() {
         xParameter ? settings[xParameter.id]?.depth ?? 0 : 0,
         yParameter ? settings[yParameter.id]?.depth ?? 0 : 0
       );
-      const layout = visualDrumPadLayout[index] ?? visualDrumPadLayout[0];
+      const layout = activeLayout[index] ?? activeLayout[0];
       const ageMs = padRuntime.lastHitAt > 0 ? now - padRuntime.lastHitAt : Number.POSITIVE_INFINITY;
       const intensity = padRuntime.lastHitAt > 0 ? Math.max(0, Math.exp(-ageMs / 420) * padRuntime.intensity) : 0;
       const holdAgeMs = padRuntime.active && padRuntime.holdStartedAt > 0 ? now - padRuntime.holdStartedAt : 0;
@@ -1511,7 +1545,8 @@ export function App() {
     const scene = activeShaderSceneRef.current;
     const performanceMode = performanceLayerModeRef.current;
     const padSet = getPerformanceVisualDrumPadSet(performanceMode, visualDrumPadSetRef.current);
-    const pads = visualDrumPadsRef.current;
+    const pads = getPerformanceVisualDrumPads(visualDrumPadsRef.current, performanceMode, visualDrumPadSetRef.current);
+    const padLayout = getPerformanceVisualDrumPadLayout(performanceMode, visualDrumPadSetRef.current);
     if (performanceMode === "wireframe" || scene.parameters.length === 0 || pads.every((pad) => !pad.enabled)) {
       visualDrumPadInsideRef.current = new Set();
       visualDrumPadStrikeSamplesRef.current = new Map();
@@ -1574,7 +1609,7 @@ export function App() {
         };
         return;
       }
-      const layout = visualDrumPadLayout[index];
+      const layout = padLayout[index];
       const parameter = getVisualDrumPadParameter(scene, pad, index);
       if (!layout || !parameter) {
         visualDrumPadRuntimeRef.current[pad.id] = {
@@ -2500,6 +2535,26 @@ export function App() {
         .filter(([, active]) => active)
         .map(([name]) => gestureLabels[name as keyof MotionFrame["gestures"]] ?? name)
     : ["Idle"];
+  const activeVisualDrumPadSet =
+    visualDrumPadSets.find((set) => set.id === visualDrumPadSetId) ?? visualDrumPadSets[0];
+  const activeVisualControlPads = useMemo(
+    () => getPerformanceVisualDrumPads(visualDrumPads, performanceLayerMode, visualDrumPadSetId),
+    [performanceLayerMode, visualDrumPadSetId, visualDrumPads]
+  );
+  const activeVisualMappingPads = useMemo(
+    () => getVisualDrumPadsForSet(visualDrumPads, activeVisualDrumPadSet),
+    [activeVisualDrumPadSet, visualDrumPads]
+  );
+
+  useEffect(() => {
+    if (
+      activeWorkspace === "pads" &&
+      activeVisualControlPads.length > 0 &&
+      !activeVisualControlPads.some((pad) => pad.id === selectedVisualPadId)
+    ) {
+      setSelectedVisualPadId(activeVisualControlPads[0].id);
+    }
+  }, [activeVisualControlPads, activeWorkspace, selectedVisualPadId]);
 
   return (
     <main
@@ -2572,6 +2627,12 @@ export function App() {
             </div>
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
+          {visualMode === "camera" && captureState !== "running" && (
+            <EmptyState captureState={captureState} cameraIssue={cameraIssue} />
+          )}
+        </section>
+
+        {activeWorkspace !== "signal" && (
           <ViewerMotionHud
             motion={motion}
             scene={activeShaderScene}
@@ -2579,10 +2640,7 @@ export function App() {
             shaderValues={shaderValues}
             visualMode={visualMode}
           />
-          {visualMode === "camera" && captureState !== "running" && (
-            <EmptyState captureState={captureState} cameraIssue={cameraIssue} />
-          )}
-        </section>
+        )}
 
         {activeWorkspace !== "signal" && (
           <button
@@ -2693,7 +2751,7 @@ export function App() {
                   onReset={resetVisualDrumPads}
                   onSetChange={setVisualDrumPadSetId}
                   onUpdate={updateVisualDrumPad}
-                  pads={visualDrumPads}
+                  pads={activeVisualMappingPads}
                   setId={visualDrumPadSetId}
                 />
                 <GestureActionMatrixEditor
@@ -2722,7 +2780,8 @@ export function App() {
                 onSelectPad={setSelectedVisualPadId}
                 onSetChange={setVisualDrumPadSetId}
                 onUpdate={updateVisualDrumPad}
-                pads={visualDrumPads}
+                pads={activeVisualControlPads}
+                performanceMode={performanceLayerMode}
                 selectedPadId={selectedVisualPadId}
                 setId={visualDrumPadSetId}
                 shaderValues={shaderValues}
@@ -3640,6 +3699,7 @@ type VisualControlSurfaceProps = {
   onSetChange: (setId: VisualDrumPadSetId) => void;
   onUpdate: (padId: string, patch: Partial<VisualDrumPadMapping>) => void;
   pads: VisualDrumPadMapping[];
+  performanceMode: PerformanceLayerMode;
   selectedPadId: string;
   setId: VisualDrumPadSetId;
   shaderValues: number[];
@@ -3655,11 +3715,12 @@ function VisualControlSurface({
   onSetChange,
   onUpdate,
   pads,
+  performanceMode,
   selectedPadId,
   setId,
   shaderValues
 }: VisualControlSurfaceProps) {
-  const activeSet = visualDrumPadSets.find((set) => set.id === setId) ?? visualDrumPadSets[0];
+  const activeSet = getPerformanceVisualDrumPadSet(performanceMode, setId);
   const selectedIndex = Math.max(0, pads.findIndex((pad) => pad.id === selectedPadId));
   const selectedPad = pads[selectedIndex] ?? pads[0];
   const [surfacePoint, setSurfacePoint] = useState({ x: 0.5, y: 0.5 });
