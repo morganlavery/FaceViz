@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#0b0d10" />
+    <title>Thanks - INFINIGHTCapture</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body>
+    <header class="site-header" aria-label="Primary navigation">
+      <a class="brand-mark" href="../" aria-label="INFINIGHTCapture home">
+        <span class="brand-glyph" aria-hidden="true"></span>
+        <span>INFINIGHTCapture</span>
+      </a>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="../#features">Features</a>
+        <a href="../#output">Output</a>
+        <a href="../#download">Download</a>
+      </nav>
+    </header>
+
+    <main class="checkout-result">
+      <section class="content-section download-section" aria-labelledby="thanks-title">
+        <div class="section-heading">
+          <p class="eyebrow">Payment complete</p>
+          <h1 id="thanks-title">Your no-watermark build is ready.</h1>
+          <p>
+            Download the paid installer for your platform. Keep this page open until both downloads finish.
+          </p>
+        </div>
+        <div class="download-grid">
+          <a class="download-row" data-paid-download="mac" href="/api/download/mac">
+            <span>macOS Apple Silicon</span>
+            <strong>Paid DMG</strong>
+          </a>
+          <a class="download-row" data-paid-download="windows" href="/api/download/windows">
+            <span>Windows x64</span>
+            <strong>Paid installer</strong>
+          </a>
+          <a class="download-row" href="mailto:hello@infinightcapture.com">
+            <span>Need help?</span>
+            <strong>Email support</strong>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>INFINIGHTCapture</span>
+      <a href="mailto:hello@infinightcapture.com">hello@infinightcapture.com</a>
+    </footer>
+
+    <script type="module">
+      const sessionId = new URLSearchParams(window.location.search).get("session_id");
+      document.querySelectorAll("[data-paid-download]").forEach((link) => {
+        if (!sessionId) {
+          link.setAttribute("aria-disabled", "true");
+          link.addEventListener("click", (event) => event.preventDefault());
+          return;
+        }
+
+        const url = new URL(link.getAttribute("href"), window.location.origin);
+        url.searchParams.set("session_id", sessionId);
+        link.href = url.toString();
+      });
+    </script>
+  </body>
+</html>

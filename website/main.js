@@ -161,14 +161,49 @@ if (previewCanvas) {
 const toast = document.querySelector("#toast");
 let toastTimer = 0;
 
+function showToast(message) {
+  window.clearTimeout(toastTimer);
+  toast.textContent = message;
+  toast.classList.add("is-visible");
+  toastTimer = window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+  }, 4200);
+}
+
 document.querySelectorAll("[data-placeholder-link]").forEach((link) => {
   link.addEventListener("click", (event) => {
     event.preventDefault();
-    window.clearTimeout(toastTimer);
-    toast.textContent = "This launch link is ready to connect once the first demo and $5 checkout are published.";
-    toast.classList.add("is-visible");
-    toastTimer = window.setTimeout(() => {
-      toast.classList.remove("is-visible");
-    }, 3600);
+    showToast("This launch link is ready to connect once the first demo builds are published.");
+  });
+});
+
+document.querySelectorAll("[data-checkout-button]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const originalLabel = button.textContent;
+    button.disabled = true;
+    button.textContent = "Opening checkout";
+
+    try {
+      const response = await fetch("/api/create-checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          product: "infinightcapture-license"
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || !payload.url) {
+        throw new Error(payload.error || "Checkout is not configured yet.");
+      }
+
+      window.location.href = payload.url;
+    } catch (error) {
+      showToast(error.message || "Checkout could not be opened yet.");
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
   });
 });
