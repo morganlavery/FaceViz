@@ -7,9 +7,43 @@ $OutputPath = Join-Path $BuildDir "SpoutFramePublisher.exe"
 
 New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
 
+function Import-VisualStudioCompilerEnvironment {
+  if (Get-Command cl.exe -ErrorAction SilentlyContinue) {
+    return
+  }
+
+  $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
+  if (-not (Test-Path $vswhere)) {
+    return
+  }
+
+  $installPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+  if (-not $installPath) {
+    return
+  }
+
+  $vsDevCmd = Join-Path $installPath "Common7\Tools\VsDevCmd.bat"
+  if (-not (Test-Path $vsDevCmd)) {
+    return
+  }
+
+  $environment = & cmd.exe /s /c "`"$vsDevCmd`" -arch=x64 -host_arch=x64 >nul && set"
+  foreach ($line in $environment) {
+    $separator = $line.IndexOf("=")
+    if ($separator -le 0) {
+      continue
+    }
+
+    $name = $line.Substring(0, $separator)
+    $value = $line.Substring($separator + 1)
+    Set-Item -Path "Env:$name" -Value $value
+  }
+}
+
+Import-VisualStudioCompilerEnvironment
 $cl = Get-Command cl.exe -ErrorAction SilentlyContinue
 if (-not $cl) {
-  throw "cl.exe was not found. Run this from a Visual Studio Developer PowerShell or Developer Command Prompt."
+  throw "cl.exe was not found. Install Visual Studio C++ build tools or run this from a Visual Studio Developer PowerShell."
 }
 
 & $cl.Path /nologo /std:c++17 /EHsc /O2 /MT /W3 /Fe:$OutputPath $SourcePath

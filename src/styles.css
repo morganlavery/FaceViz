@@ -908,6 +908,104 @@ body.layout-resizing-stage * {
   white-space: nowrap;
 }
 
+.camera-source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(150px, 220px);
+  gap: 8px;
+}
+
+.camera-source-control,
+.camera-source-status {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid rgba(var(--accent-rgb), 0.26);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(var(--brand-blue-rgb), 0.08), transparent),
+    rgba(4, 15, 23, 0.84);
+}
+
+.camera-source-control {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px;
+}
+
+.camera-source-control > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.camera-source-control svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.source-select-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.source-select-shell select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 30px 0 9px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 8px;
+  color: #e9fdff;
+  background: #041018;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  appearance: none;
+}
+
+.source-select-shell svg {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.camera-source-status {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 6px 10px;
+}
+
+.camera-source-status span,
+.camera-source-status strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera-source-status span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.camera-source-status strong {
+  color: var(--accent-soft);
+  font-size: 0.76rem;
+}
+
 .transport-row {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr)) 140px;
@@ -3085,6 +3183,7 @@ body.layout-resizing-stage * {
     flex: 1;
   }
 
+  .camera-source-row,
   .transport-row,
   .performance-layer-row,
   .telemetry-grid,
