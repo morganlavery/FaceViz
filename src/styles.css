@@ -1316,6 +1316,65 @@ body.layout-resizing-stage * {
   max-width: 460px;
 }
 
+.control-tuning-workspace {
+  display: grid;
+  gap: 12px;
+  min-height: 0;
+  padding: 12px;
+  border: 1px solid rgba(var(--accent-rgb), 0.22);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(var(--brand-blue-rgb), 0.07), transparent 42%),
+    rgba(3, 12, 18, 0.68);
+}
+
+.control-tuning-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  align-items: start;
+  gap: 12px;
+}
+
+.control-tuning-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+  border-radius: 8px;
+  background: rgba(5, 17, 24, 0.72);
+}
+
+.control-tuning-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.control-tuning-panel-header span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.control-tuning-panel-header strong {
+  flex: 0 0 auto;
+  max-width: 144px;
+  overflow: hidden;
+  color: var(--accent-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .shader-parameter-dock {
   display: grid;
   gap: 10px;
@@ -3424,6 +3483,7 @@ body.layout-resizing-stage * {
   .transport-row,
   .performance-layer-row,
   .telemetry-grid,
+  .control-tuning-grid,
   .signal-inspector {
     grid-template-columns: 1fr;
   }
