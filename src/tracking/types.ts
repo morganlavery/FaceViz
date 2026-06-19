@@ -65,6 +65,7 @@ export type GestureState = {
   faceCover: boolean;
   pinch: boolean;
   openPalm: boolean;
+  doubleFist: boolean;
   fastMotion: boolean;
   mouthOpen: boolean;
   smile: boolean;

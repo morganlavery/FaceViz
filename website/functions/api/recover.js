@@ -25,6 +25,7 @@ export async function onRequestPost({ env, request }) {
     const downloadUrl = await createDownloadPageUrl(env, purchase, { recovered: true });
     await sendDownloadEmail(env, {
       downloadUrl,
+      recovered: true,
       to: purchase.email
     });
   }

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#02080f" />
+    <title>Redeem Promo Code - INFINIGHTCapture</title>
+    <link rel="icon" type="image/png" href="../assets/brand/infinightcapture_icon.png" />
+    <link rel="stylesheet" href="../styles.css?v=promo-flow-20260619" />
+  </head>
+  <body>
+    <header class="site-header" aria-label="Primary navigation">
+      <a class="brand-mark" href="../" aria-label="INFINIGHTCapture home">
+        <img
+          src="../assets/brand/infinightcapture_horizontal_logo.png"
+          srcset="../assets/brand/infinightcapture_horizontal_logo.png 1x, ../assets/brand/infinightcapture_horizontal_logo_2x.png 2x"
+          width="224"
+          height="69"
+          alt="INFINIGHTCapture"
+        />
+      </a>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="../#features">Features</a>
+        <a href="../#output">Output</a>
+        <a href="../#download">Download</a>
+      </nav>
+    </header>
+
+    <main class="checkout-result">
+      <section class="content-section download-section" aria-labelledby="redeem-title">
+        <div class="section-heading">
+          <p class="eyebrow">Artist promo</p>
+          <h1 id="redeem-title">Unlock your no-watermark build.</h1>
+          <p>
+            Enter the code you received and the assigned email. A private download link will open here and arrive by
+            email.
+          </p>
+        </div>
+
+        <form class="recovery-form promo-form" id="promo-redeem-form">
+          <label class="form-field">
+            <span>Promo code</span>
+            <input autocomplete="one-time-code" name="code" placeholder="ARTIST-AB12CD34" required />
+          </label>
+          <label class="form-field">
+            <span>Email</span>
+            <input autocomplete="email" inputmode="email" name="email" placeholder="artist@example.com" required type="email" />
+          </label>
+          <label class="form-field">
+            <span>Name</span>
+            <input autocomplete="name" name="name" placeholder="Artist name" />
+          </label>
+          <button class="button button-primary" type="submit">Redeem code</button>
+          <p class="status-note" id="promo-redeem-status" role="status" aria-live="polite"></p>
+          <a class="button button-secondary promo-download-link" id="promo-download-link" hidden href="../thanks/">Open download page</a>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>INFINIGHTCapture</span>
+      <a href="mailto:hello@infinightcapture.com">hello@infinightcapture.com</a>
+    </footer>
+
+    <script type="module">
+      const form = document.querySelector("#promo-redeem-form");
+      const status = document.querySelector("#promo-redeem-status");
+      const downloadLink = document.querySelector("#promo-download-link");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const submitButton = form.querySelector("button");
+        const formData = new FormData(form);
+        submitButton.disabled = true;
+        downloadLink.hidden = true;
+        status.textContent = "Redeeming code...";
+
+        try {
+          const response = await fetch("/api/redeem-promo", {
+            body: JSON.stringify({
+              code: formData.get("code"),
+              email: formData.get("email"),
+              name: formData.get("name")
+            }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST"
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.error || "Promo redemption is not available yet.");
+          }
+          status.textContent = payload.message || "Promo code redeemed.";
+          downloadLink.href = payload.downloadUrl;
+          downloadLink.hidden = false;
+        } catch (error) {
+          status.textContent = error.message || "Promo redemption is not available yet.";
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

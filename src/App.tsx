@@ -53,6 +53,7 @@ import {
   shaderMotionSources,
   shaderScenes,
   type INFINIGHTCaptureShaderPreset,
+  type ShaderMotionSource,
   type ShaderScene,
   type ShaderParameterDefinition,
   type ShaderParameterSettings
@@ -203,6 +204,9 @@ const FACE_MODEL =
 const ENABLE_SHADER_WORKSPACE = false;
 
 const effects = [
+  { id: "bodyWire", label: "Body Wire Wrap", icon: Expand },
+  { id: "bodyThermal", label: "Thermal Body", icon: Activity },
+  { id: "cyberSuit", label: "Cyber Suit", icon: Crown },
   { id: "fingerpull", label: "Finger Pull", icon: Hand },
   { id: "nosepull", label: "Nose Pull", icon: ScanFace },
   { id: "facestretch", label: "Stretch Face", icon: ScanFace },
@@ -212,8 +216,19 @@ const effects = [
   { id: "contour", label: "Contour Bands", icon: ScanFace }
 ];
 const effectIds = new Set(effects.map((effect) => effect.id));
+const liveMaskModes = [
+  { id: "none", label: "No Mask", icon: EyeOff },
+  { id: "chromeMask", label: "Chrome Mask", icon: ScanFace },
+  { id: "wireSkull", label: "Wire Skull", icon: ScanFace },
+  { id: "thermalFace", label: "Thermal Face", icon: Activity },
+  { id: "crackedPorcelain", label: "Cracked Porcelain", icon: ShieldAlert },
+  { id: "cyberVisor", label: "Cyber Visor", icon: EyeOff },
+  { id: "contourPaint", label: "Contour Paint", icon: Sparkles },
+  { id: "creatureFace", label: "Creature Face", icon: Crown }
+];
+const fullBodyEffectIds = new Set(["bodyWire", "bodyThermal", "cyberSuit"]);
 const bodyWarpEffects = effects.filter((effect) =>
-  ["fingerpull", "nosepull", "facestretch", "facesquash", "warp"].includes(effect.id)
+  ["bodyWire", "bodyThermal", "cyberSuit", "fingerpull", "nosepull", "facestretch", "facesquash", "warp"].includes(effect.id)
 );
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
@@ -335,6 +350,7 @@ const defaultSignalNodePositions: Record<SignalNodeId, SignalNodePosition> = {
 };
 
 const signalNodeIds: SignalNodeId[] = ["camera", "tracker", "core", "output", "consumer", "input"];
+const performerMotionSourceIds: ShaderMotionSource[] = ["openPalm", "mouthOpen", "doubleFist", "smile"];
 
 const signalGraphViewBox: SignalGraphSize = {
   width: 1000,
@@ -355,6 +371,7 @@ const gestureLabels: Record<keyof MotionFrame["gestures"], string> = {
   faceCover: "Face cover",
   pinch: "Pinch",
   openPalm: "Open palm",
+  doubleFist: "Double fist",
   fastMotion: "Fast motion",
   mouthOpen: "Mouth open",
   smile: "Smile",
@@ -1178,11 +1195,13 @@ export function App() {
   const outputTimerRef = useRef<number | null>(null);
   const compositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
+    showGestureOverlays: true,
     effectAmount: 0.82,
     selectedEffect: "fingerpull"
   });
   const outputCompositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
+    showGestureOverlays: true,
     effectAmount: 0.82,
     selectedEffect: "fingerpull",
     watermark: {
@@ -1219,11 +1238,12 @@ export function App() {
   const [mode, setMode] = useState<TrackingPreviewMode>("upper");
   const [performanceLayerMode, setPerformanceLayerMode] = useState<PerformanceLayerMode>("wireframe");
   const [previewCompositionMode, setPreviewCompositionMode] = useState<PreviewCompositionMode>("composite");
-  const showRig = previewCompositionMode === "composite" || previewCompositionMode === "wireframe";
   const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
   const [selectedEffect, setSelectedEffect] = useState("fingerpull");
+  const [expressionPersonas, setExpressionPersonas] = useState(false);
+  const [liveMaskMode, setLiveMaskMode] = useState("none");
   const [outputTarget, setOutputTarget] = useState<OutputTarget>(getPreferredOutput);
   const [isOutputStreaming, setIsOutputStreaming] = useState(false);
   const [outputError, setOutputError] = useState("");
@@ -1340,6 +1360,11 @@ export function App() {
     previewCompositionModes[0];
   const previewSelectedEffect =
     previewCompositionMode === "wireframe" || previewCompositionMode === "camera" ? "none" : selectedEffect;
+  const previewLiveMaskMode =
+    previewCompositionMode === "wireframe" || previewCompositionMode === "camera" ? "none" : liveMaskMode;
+  const selectedLiveMaskMode = liveMaskModes.find((mask) => mask.id === liveMaskMode) ?? liveMaskModes[0];
+  const showRig = previewCompositionMode === "wireframe" || (previewCompositionMode === "composite" && previewSelectedEffect === "none");
+  const showGestureOverlays = previewCompositionMode === "composite" || previewCompositionMode === "wireframe";
   const shaderLibrary = useMemo(() => [...shaderScenes, ...importedShaderScenes], [importedShaderScenes]);
   const activeShaderScene = useMemo(() => getShaderSceneFromLibrary(shaderSceneId, shaderLibrary), [shaderLibrary, shaderSceneId]);
   const shaderValues = useMemo(
@@ -1347,6 +1372,7 @@ export function App() {
     [activeShaderScene, motion, shaderSettings]
   );
   const activeTrackingMode = trackingPreviewModes.find((previewMode) => previewMode.id === mode) ?? trackingPreviewModes[0];
+  const compositorTrackingMode: TrackingPreviewMode = fullBodyEffectIds.has(selectedEffect) ? "full" : mode;
   const activePerformanceLayerMode =
     performanceLayerModes.find((performanceMode) => performanceMode.id === performanceLayerMode) ?? performanceLayerModes[0];
   const selectedCameraDevice = cameraDevices.find((device) => device.deviceId === selectedCameraDeviceId);
@@ -1357,6 +1383,7 @@ export function App() {
         ? "Mobile live feed"
         : "Waiting for phone"
       : selectedCameraLabel;
+  const cameraPermissionOrigin = window.location.origin;
   const mobileFeedUrl = mobileFeedStatus?.primaryUrl ?? "";
   const mobileFeedIsSecure = mobileFeedUrl.startsWith("https://");
   const mobileFeedPairingLabel = mobileFeedIsSecure ? "Secure scan code" : "Local scan code";
@@ -2408,10 +2435,13 @@ export function App() {
   useEffect(() => {
     compositorOptionsRef.current = {
       showRig,
+      showGestureOverlays,
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
       selectedEffect: previewSelectedEffect,
+      expressionPersonas,
+      liveMaskMode: previewLiveMaskMode,
       visualMode,
-      trackingMode: mode,
+      trackingMode: previewSelectedEffect === "none" ? mode : compositorTrackingMode,
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings,
       visualDrumPads: visualDrumPadOverlayRef.current,
@@ -2423,10 +2453,13 @@ export function App() {
     };
     outputCompositorOptionsRef.current = {
       showRig: selectedOutputComposition.showRig && performanceLayerMode === "wireframe",
+      showGestureOverlays: selectedOutputComposition.showRig && performanceLayerMode === "wireframe",
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
       selectedEffect,
+      expressionPersonas,
+      liveMaskMode,
       includeCameraFeed: selectedOutputComposition.includeCameraFeed,
-      trackingMode: mode,
+      trackingMode: compositorTrackingMode,
       visualMode: ENABLE_SHADER_WORKSPACE ? "shader" : "camera",
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings,
@@ -2440,12 +2473,17 @@ export function App() {
   }, [
     activeShaderScene,
     effectAmount,
+    expressionPersonas,
+    liveMaskMode,
+    previewLiveMaskMode,
     reducedMotion,
     selectedEffect,
     selectedOutputComposition.includeCameraFeed,
     selectedOutputComposition.showRig,
+    showGestureOverlays,
     shaderSettings,
     showRig,
+    compositorTrackingMode,
     mode,
     performanceLayerMode,
     previewSelectedEffect,
@@ -3056,7 +3094,13 @@ export function App() {
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
           {visualMode === "camera" && captureState !== "running" && (
-            <EmptyState captureState={captureState} cameraIssue={cameraIssue} />
+            <EmptyState
+              cameraIssue={cameraIssue}
+              cameraPermissionOrigin={cameraPermissionOrigin}
+              captureState={captureState}
+              onOpenExternal={() => void openExternalUrl(window.location.href)}
+              onRetry={() => void startCapture(selectedCameraDeviceId, { force: true })}
+            />
           )}
         </section>
 
@@ -3065,12 +3109,54 @@ export function App() {
             <div className="mapping-header">
               <div>
                 <p className="eyebrow">Camera Effects</p>
-                <h2>{effects.find((effect) => effect.id === selectedEffect)?.label ?? "Camera Effects"}</h2>
+                <h2>{expressionPersonas ? "Expression Persona" : effects.find((effect) => effect.id === selectedEffect)?.label ?? "Camera Effects"}</h2>
               </div>
               <div className="mapping-summary">
-                <span>Amount</span>
-                <strong>{Math.round(effectAmount * 100)}%</strong>
+                <span>{selectedLiveMaskMode.id === "none" ? "Mask" : selectedLiveMaskMode.label}</span>
+                <strong>{expressionPersonas ? "Persona On" : `${Math.round(effectAmount * 100)}%`}</strong>
               </div>
+            </div>
+            <div className="effect-list camera-effects-list" aria-label="Expression persona">
+              <button
+                className={expressionPersonas ? "effect-button active" : "effect-button"}
+                onClick={() => {
+                  setExpressionPersonas((enabled) => !enabled);
+                  setPreviewCompositionMode("composite");
+                  setVisualMode("camera");
+                }}
+                title="Map smile, frown, mouth, and eyes into bloom, glitch, shockwave, and dream blur"
+                type="button"
+              >
+                <Smile size={17} />
+                <span>Expression Persona</span>
+              </button>
+              <div className="body-warp-status" aria-label="Expression persona signals">
+                <Metric icon={Smile} label="Smile" value={`${Math.round((motion?.face?.smile ?? 0) * 100)}%`} />
+                <Metric icon={ShieldAlert} label="Frown" value={`${Math.round((motion?.face?.frown ?? 0) * 100)}%`} />
+                <Metric icon={Activity} label="Mouth" value={`${Math.round((motion?.face?.mouthOpenness ?? 0) * 100)}%`} />
+                <Metric icon={EyeOff} label="Eyes" value={`${Math.round((motion?.face?.eyeClosure ?? 0) * 100)}%`} />
+              </div>
+            </div>
+            <div className="effect-list camera-effects-list" aria-label="Live mask builder">
+              {liveMaskModes.map((maskMode) => {
+                const Icon = maskMode.icon;
+                return (
+                  <button
+                    key={maskMode.id}
+                    className={liveMaskMode === maskMode.id ? "effect-button active" : "effect-button"}
+                    onClick={() => {
+                      setLiveMaskMode(maskMode.id);
+                      setPreviewCompositionMode("composite");
+                      setVisualMode("camera");
+                    }}
+                    title={maskMode.label}
+                    type="button"
+                  >
+                    <Icon size={17} />
+                    <span>{maskMode.label}</span>
+                  </button>
+                );
+              })}
             </div>
             <div className="effect-list camera-effects-list">
               {effects.map((effect) => {
@@ -3081,6 +3167,10 @@ export function App() {
                     className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
                     onClick={() => {
                       setSelectedEffect(effect.id);
+                      if (fullBodyEffectIds.has(effect.id)) {
+                        setMode("full");
+                        setPreviewCompositionMode("composite");
+                      }
                       setVisualMode("camera");
                     }}
                     title={effect.label}
@@ -3092,17 +3182,12 @@ export function App() {
                 );
               })}
             </div>
-            <label className="range-control camera-effects-amount">
-              <span>Amount</span>
-              <input
-                type="range"
-                min="0"
-                max="1.4"
-                step="0.01"
-                value={effectAmount}
-                onChange={(event) => setEffectAmount(Number(event.target.value))}
-              />
-            </label>
+            <AmountKnob
+              label="Amount"
+              max={1.4}
+              value={effectAmount}
+              onChange={setEffectAmount}
+            />
           </section>
         )}
 
@@ -3128,6 +3213,9 @@ export function App() {
                       className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
                       onClick={() => {
                         setSelectedEffect(effect.id);
+                        if (fullBodyEffectIds.has(effect.id)) {
+                          setMode("full");
+                        }
                         setPreviewCompositionMode("composite");
                         setVisualMode("camera");
                       }}
@@ -3146,17 +3234,12 @@ export function App() {
                 <Metric icon={Fingerprint} label="Intent" value={motion?.dominantIntent ?? "Neutral stance"} />
               </div>
             </div>
-            <label className="range-control camera-effects-amount">
-              <span>Amount</span>
-              <input
-                type="range"
-                min="0"
-                max="1.4"
-                step="0.01"
-                value={effectAmount}
-                onChange={(event) => setEffectAmount(Number(event.target.value))}
-              />
-            </label>
+            <AmountKnob
+              label="Amount"
+              max={1.4}
+              value={effectAmount}
+              onChange={setEffectAmount}
+            />
           </section>
         )}
 
@@ -3342,8 +3425,9 @@ export function App() {
                 <strong>{error}</strong>
                 {cameraIssue === "blocked" && (
                   <ol>
-                    <li>Reset camera permission for 127.0.0.1:5173 in the browser controls.</li>
+                    <li>Reset camera permission for {cameraPermissionOrigin} in the browser controls.</li>
                     <li>Reload the app, then press Start again.</li>
+                    <li>If this in-app browser never shows a camera prompt, open the same URL in your system browser.</li>
                     <li>For the desktop shell, allow camera access for Electron or this app in macOS settings.</li>
                   </ol>
                 )}
@@ -4832,6 +4916,7 @@ const isSignalActive = (source: ShaderParameterSettings["source"], value: number
       return value > 0.34;
     case "handOpen":
     case "openPalm":
+    case "doubleFist":
     case "mouthOpen":
     case "smile":
     case "frown":
@@ -4853,26 +4938,9 @@ const isSignalActive = (source: ShaderParameterSettings["source"], value: number
 };
 
 function ViewerMotionHud({ motion, scene, settings, shaderValues, visualMode }: ViewerMotionHudProps) {
-  const signalRows = shaderMotionSources.filter((source) => source.id !== "manual");
-  const parameterRows = scene.parameters.map((parameter, index) => {
-    const setting = settings[parameter.id] ?? {
-      value: parameter.defaultValue,
-      source: parameter.motionDefault,
-      depth: 0
-    };
-    const source = shaderMotionSources.find((motionSource) => motionSource.id === setting.source);
-    const signalValue = getMotionSignalValue(setting.source, motion);
-
-    return {
-      id: parameter.id,
-      label: parameter.label,
-      max: parameter.max,
-      min: parameter.min,
-      sourceLabel: source?.label ?? "Manual",
-      signalValue,
-      value: shaderValues[index] ?? parameter.defaultValue
-    };
-  });
+  const signalRows = performerMotionSourceIds
+    .map((sourceId) => shaderMotionSources.find((source) => source.id === sourceId))
+    .filter((source): source is { id: ShaderMotionSource; label: string } => Boolean(source));
 
   return (
     <div className={visualMode === "shader" ? "viewer-motion-hud shader" : "viewer-motion-hud"} aria-label="Live mocap parameters">
@@ -4891,20 +4959,6 @@ function ViewerMotionHud({ motion, scene, settings, shaderValues, visualMode }: 
           );
         })}
       </div>
-      <div className="viewer-param-row">
-        {parameterRows.map((parameter) => (
-          <GaugeReadout
-            active={parameter.signalValue > 0.5}
-            displayValue={parameter.value.toFixed(2)}
-            key={parameter.id}
-            label={parameter.label}
-            max={parameter.max}
-            min={parameter.min}
-            sublabel={parameter.sourceLabel}
-            value={parameter.value}
-          />
-        ))}
-      </div>
     </div>
   );
 }
@@ -4918,6 +4972,61 @@ type GaugeReadoutProps = {
   sublabel?: string;
   value: number;
 };
+
+type AmountKnobProps = {
+  label: string;
+  max: number;
+  min?: number;
+  onChange: (value: number) => void;
+  value: number;
+};
+
+function AmountKnob({ label, max, min = 0, onChange, value }: AmountKnobProps) {
+  const range = max - min || 1;
+  const normalizedValue = clampNumber((value - min) / range);
+  const angle = -135 + normalizedValue * 270;
+  const percent = Math.round(value * 100);
+
+  return (
+    <label
+      className="amount-knob-control camera-effects-amount"
+      style={{ "--amount-knob-angle": `${angle}deg`, "--amount-knob-value": normalizedValue } as CSSProperties}
+    >
+      <span>{label}</span>
+      <div className="amount-knob-shell">
+        <svg className="amount-knob-face" viewBox="0 0 120 120" aria-hidden="true" role="presentation">
+          <circle className="amount-knob-outer" cx="60" cy="60" r="49" />
+          <path className="amount-knob-track" d="M25.4 94.6 A49 49 0 1 1 94.6 94.6" pathLength="100" />
+          <path
+            className="amount-knob-progress"
+            d="M25.4 94.6 A49 49 0 1 1 94.6 94.6"
+            pathLength="100"
+            style={{ strokeDasharray: `${Math.max(1, normalizedValue * 100)} 100` }}
+          />
+          <g className="amount-knob-ticks">
+            {[-135, -90, -45, 0, 45, 90, 135].map((tick) => (
+              <line key={tick} x1="60" y1="13" x2="60" y2="19" transform={`rotate(${tick} 60 60)`} />
+            ))}
+          </g>
+          <circle className="amount-knob-cap" cx="60" cy="60" r="31" />
+          <line className="amount-knob-pointer" x1="60" y1="60" x2="60" y2="34" />
+          <circle className="amount-knob-pin" cx="60" cy="60" r="5.4" />
+        </svg>
+        <strong>{percent}%</strong>
+        <input
+          aria-label={label}
+          className="amount-knob-input"
+          type="range"
+          min={min}
+          max={max}
+          step="0.01"
+          value={value}
+          onChange={(event) => onChange(Number(event.target.value))}
+        />
+      </div>
+    </label>
+  );
+}
 
 function GaugeReadout({
   active = false,
@@ -4934,23 +5043,26 @@ function GaugeReadout({
   return (
     <div className={active ? "gauge-readout active" : "gauge-readout"}>
       <span>{label}</span>
-      <svg className="gauge-readout-dial" viewBox="0 0 120 64" role="presentation" aria-hidden="true">
-        <path className="gauge-readout-track" d="M16 54 A44 44 0 0 1 104 54" pathLength="100" />
-        <path
+      <svg className="gauge-readout-dial" viewBox="0 0 96 96" role="presentation" aria-hidden="true">
+        <circle className="gauge-readout-plate" cx="48" cy="48" r="35" />
+        <circle className="gauge-readout-track" cx="48" cy="48" r="35" pathLength="100" />
+        <circle
           className="gauge-readout-value"
-          d="M16 54 A44 44 0 0 1 104 54"
+          cx="48"
+          cy="48"
+          r="35"
           pathLength="100"
           style={{ strokeDasharray: `${Math.max(1, normalizedValue * 100)} 100` }}
         />
         <line
           className="gauge-readout-needle"
-          x1="60"
-          y1="54"
-          x2="60"
-          y2="18"
-          style={{ transform: `rotate(${-86 + normalizedValue * 172}deg)` }}
+          x1="48"
+          y1="48"
+          x2="48"
+          y2="23"
+          style={{ transform: `rotate(${-135 + normalizedValue * 270}deg)` }}
         />
-        <circle className="gauge-readout-pin" cx="60" cy="54" r="4.6" />
+        <circle className="gauge-readout-pin" cx="48" cy="48" r="5" />
       </svg>
       <strong>{displayValue}</strong>
       {sublabel && <small>{sublabel}</small>}
@@ -5141,13 +5253,35 @@ function NativeOutputDiagnostics({
   );
 }
 
-function EmptyState({ captureState, cameraIssue }: { captureState: CaptureState; cameraIssue: CameraIssue }) {
+function EmptyState({
+  cameraIssue,
+  cameraPermissionOrigin,
+  captureState,
+  onOpenExternal,
+  onRetry
+}: {
+  cameraIssue: CameraIssue;
+  cameraPermissionOrigin: string;
+  captureState: CaptureState;
+  onOpenExternal: () => void;
+  onRetry: () => void;
+}) {
   if (cameraIssue === "blocked") {
     return (
       <div className="empty-state">
         <ShieldAlert size={36} />
         <strong>Camera permission blocked</strong>
-        <span>Reset this site&apos;s camera permission, then start capture again.</span>
+        <span>Reset camera access for {cameraPermissionOrigin}, then try again.</span>
+        <div className="empty-state-actions">
+          <button type="button" onClick={onRetry}>
+            <RefreshCw size={15} />
+            Retry
+          </button>
+          <button type="button" onClick={onOpenExternal}>
+            <Link2 size={15} />
+            Open in browser
+          </button>
+        </div>
       </div>
     );
   }

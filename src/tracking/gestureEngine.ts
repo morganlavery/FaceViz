@@ -240,6 +240,7 @@ export const analyzeMotion = (
     });
   const pinch = hands.some((hand) => hand.pinch > 0.64);
   const openPalm = hands.some((hand) => hand.openness > 0.56);
+  const doubleFist = hands.length >= 2 && hands.filter((hand) => hand.openness < 0.34).length >= 2;
   const fastMotion = hands.some((hand) => hand.velocity > 0.36);
   const faceWidth = face ? face.bounds.maxX - face.bounds.minX : 0;
   const faceHeight = face ? face.bounds.maxY - face.bounds.minY : 0;
@@ -272,6 +273,7 @@ export const analyzeMotion = (
     !faceCover &&
     !pinch &&
     !openPalm &&
+    !doubleFist &&
     !fastMotion &&
     !mouthOpen &&
     !smile &&
@@ -284,6 +286,7 @@ export const analyzeMotion = (
     faceCover,
     pinch,
     openPalm,
+    doubleFist,
     fastMotion,
     mouthOpen,
     smile,
@@ -322,6 +325,7 @@ export const getDominantIntent = (gestures: GestureState) => {
   if (gestures.faceCover) return "Face ignition";
   if (gestures.handsUp) return "Lift melt";
   if (gestures.pinch) return "Pinch warp";
+  if (gestures.doubleFist) return "Double fist";
   if (gestures.fastMotion) return "Velocity trails";
   if (gestures.openPalm) return "Palm bloom";
   return "Neutral stance";

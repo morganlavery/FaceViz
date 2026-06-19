@@ -62,6 +62,25 @@ the card payment.
 16. Copy Stripe's webhook signing secret and add it as:
     - `STRIPE_WEBHOOK_SECRET`
 
+## Artist Promo Codes
+
+Promo codes are managed by the site/backend and redeem into the same active license/download flow as
+paid purchases.
+
+1. Apply the promo migration:
+   - `npx wrangler d1 migrations apply infinightcapture-purchases --remote`
+2. Add these Cloudflare Pages secrets:
+   - `PROMO_ADMIN_TOKEN`: private password for `/promo-admin/`
+   - `PROMO_CODE_SECRET`: random 32+ byte secret for hashing promo codes
+3. Visit `/promo-admin/`, enter the admin token, and generate a code for an artist.
+4. Send the artist:
+   - Their one-time promo code
+   - `https://infinightcapture.com/redeem/`
+
+If a code is generated with an artist email, redemption must use that same email. Codes can be revoked
+from the admin page. The full code is only displayed once at creation time; later admin views show a
+partial prefix for recognition.
+
 The checkout button calls `/api/create-checkout`, redirects to Stripe Checkout, and returns to
 `/thanks/?session_id=...`. Paid download links call `/api/download/mac` or `/api/download/windows`
 with the Checkout Session ID, verify that Stripe reports the session as paid for the configured

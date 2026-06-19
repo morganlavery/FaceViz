@@ -1,5 +1,5 @@
 import { pointToCanvas } from "../tracking/gestureEngine";
-import type { Landmark, MotionFrame, TrackedFace, Vec2 } from "../tracking/types";
+import type { Landmark, MotionFrame, TrackedFace, TrackedPose, Vec2 } from "../tracking/types";
 import {
   MotionShaderPlayer,
   resolveShaderParameterValues,
@@ -116,8 +116,11 @@ export type VisualDrumPadOverlayPad = {
 
 export type CompositorOptions = {
   showRig: boolean;
+  showGestureOverlays?: boolean;
   effectAmount: number;
   selectedEffect: string;
+  expressionPersonas?: boolean;
+  liveMaskMode?: string;
   includeCameraFeed?: boolean;
   watermark?: {
     enabled: boolean;
@@ -132,6 +135,20 @@ export type CompositorOptions = {
 };
 
 let motionShaderPlayer: MotionShaderPlayer | null = null;
+
+const maskEffectIds = new Set([
+  "chromeMask",
+  "wireSkull",
+  "thermalFace",
+  "crackedPorcelain",
+  "cyberVisor",
+  "contourPaint",
+  "creatureFace"
+]);
+
+const bodyEffectIds = new Set(["bodyWire", "bodyThermal", "cyberSuit"]);
+
+const expressionPersonaFrameCache = new WeakMap<HTMLCanvasElement, HTMLCanvasElement>();
 
 type GumStretchTarget = {
   anchor: Vec2;
@@ -153,6 +170,17 @@ type GumStretchRuntime = {
 };
 
 const gumStretchRuntimes = new WeakMap<HTMLCanvasElement, GumStretchRuntime>();
+
+type NosePullRuntime = {
+  phase: "idle" | "stretching" | "snapping";
+  anchor: Vec2;
+  smoothedTip: Vec2;
+  snapStartTip: Vec2;
+  snapStartedAt: number;
+  strength: number;
+};
+
+const nosePullRuntimes = new WeakMap<HTMLCanvasElement, NosePullRuntime>();
 
 const drawLine = (
   ctx: CanvasRenderingContext2D,
@@ -1063,6 +1091,168 @@ const drawFaceScaleWarp = (
   });
 };
 
+const getNosePullTarget = (motion: MotionFrame) => {
+  const nose = motion.face?.nose ?? motion.pose?.nose;
+  if (!nose) return null;
+
+  const grabber = motion.hands
+    .map((hand) => ({ hand, pinchPoint: getPinchPoint(hand), distance: distance(hand.centroid, nose) }))
+    .filter((entry): entry is { hand: MotionFrame["hands"][number]; pinchPoint: Vec2; distance: number } =>
+      Boolean(entry.pinchPoint) && entry.hand.pinch > GUM_PINCH_ENGAGE && distance(entry.pinchPoint as Vec2, nose) < GUM_FACE_ATTACH_RADIUS
+    )
+    .sort((a, b) => b.hand.pinch - a.hand.pinch || a.distance - b.distance)[0];
+
+  return grabber
+    ? {
+        anchor: nose,
+        tip: grabber.pinchPoint,
+        strength: grabber.hand.pinch
+      }
+    : null;
+};
+
+const drawNoseStretchPixels = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  anchor: Vec2,
+  tip: Vec2,
+  width: number,
+  height: number,
+  amount: number,
+  strength: number
+) => {
+  const start = pointToCanvas(anchor, width, height);
+  const rawEnd = pointToCanvas(tip, width, height);
+  const dx = rawEnd.x - start.x;
+  const dy = rawEnd.y - start.y;
+  const pullLength = Math.hypot(dx, dy);
+  if (pullLength < 8) return;
+
+  const frame = getCharacterFrame(motion, width, height);
+  const faceWidth = frame?.width ?? width * 0.12;
+  const faceHeight = frame?.height ?? height * 0.18;
+  const stretchLength = Math.min(pullLength, Math.max(42, faceWidth * (0.72 + amount * 0.38)));
+  const unit = { x: dx / pullLength, y: dy / pullLength };
+  const normal = { x: -unit.y, y: unit.x };
+  const end = {
+    x: start.x + unit.x * stretchLength,
+    y: start.y + unit.y * stretchLength
+  };
+  const angle = Math.atan2(unit.y, unit.x);
+  const snapshot = document.createElement("canvas");
+  snapshot.width = width;
+  snapshot.height = height;
+  const snapshotCtx = snapshot.getContext("2d");
+  if (!snapshotCtx) return;
+  snapshotCtx.drawImage(ctx.canvas, 0, 0);
+
+  const sourceWidth = clamp(faceWidth * 0.34, 28, 96);
+  const sourceHeight = clamp(faceHeight * 0.22, 22, 76);
+  const sourceX = clamp(start.x - sourceWidth * 0.5, 0, Math.max(0, width - sourceWidth));
+  const sourceY = clamp(start.y - sourceHeight * 0.48, 0, Math.max(0, height - sourceHeight));
+  const samples = 24;
+  const stripLength = Math.max(7, stretchLength / samples * 1.85);
+  const baseAcross = Math.max(16, sourceHeight * (0.72 + amount * 0.18));
+  const lift = Math.min(18, stretchLength * 0.09) * Math.sin(motion.timestamp / 260) * 0.18;
+
+  ctx.save();
+  ctx.globalCompositeOperation = "source-over";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    const taper = 1 - t * 0.58;
+    const center = {
+      x: start.x + (end.x - start.x) * t + normal.x * Math.sin(t * Math.PI) * lift,
+      y: start.y + (end.y - start.y) * t + normal.y * Math.sin(t * Math.PI) * lift
+    };
+    const across = Math.max(8, baseAcross * taper);
+    const sourceInset = sourceWidth * Math.min(0.3, t * 0.24);
+
+    ctx.save();
+    ctx.translate(center.x, center.y);
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, stripLength * 0.82, across * 0.55, 0, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(
+      snapshot,
+      clamp(sourceX + sourceInset, 0, Math.max(0, width - sourceWidth + sourceInset)),
+      sourceY,
+      Math.max(1, sourceWidth - sourceInset),
+      sourceHeight,
+      -stripLength * 0.86,
+      -across / 2,
+      stripLength * 1.72,
+      across
+    );
+    ctx.restore();
+  }
+
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = `rgba(128, 255, 249, ${0.18 + strength * 0.14})`;
+  ctx.lineWidth = Math.max(1.4, baseAcross * 0.05);
+  ctx.shadowColor = "rgba(95, 247, 255, 0.45)";
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.moveTo(start.x + normal.x * baseAcross * 0.42, start.y + normal.y * baseAcross * 0.42);
+  ctx.quadraticCurveTo(
+    (start.x + end.x) / 2 + normal.x * (baseAcross * 0.34 + lift),
+    (start.y + end.y) / 2 + normal.y * (baseAcross * 0.34 + lift),
+    end.x + normal.x * baseAcross * 0.16,
+    end.y + normal.y * baseAcross * 0.16
+  );
+  ctx.stroke();
+  ctx.restore();
+};
+
+const drawNosePullWarp = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const now = motion.timestamp;
+  const target = getNosePullTarget(motion);
+  const runtime = nosePullRuntimes.get(ctx.canvas) ?? {
+    phase: "idle",
+    anchor: { x: 0.5, y: 0.5 },
+    smoothedTip: { x: 0.5, y: 0.5 },
+    snapStartTip: { x: 0.5, y: 0.5 },
+    snapStartedAt: 0,
+    strength: 1
+  };
+  const anyPinchHeld = motion.hands.some((hand) => hand.pinch > GUM_PINCH_RELEASE);
+
+  if (target) {
+    const wasStretching = runtime.phase === "stretching";
+    runtime.phase = "stretching";
+    runtime.anchor = target.anchor;
+    runtime.smoothedTip = wasStretching ? mixPoint(runtime.smoothedTip, target.tip, 0.46) : target.tip;
+    runtime.strength = target.strength;
+  } else if (runtime.phase === "stretching" && !anyPinchHeld) {
+    runtime.phase = "snapping";
+    runtime.snapStartedAt = now;
+    runtime.snapStartTip = runtime.smoothedTip;
+  }
+
+  if (runtime.phase === "stretching") {
+    drawNoseStretchPixels(ctx, motion, runtime.anchor, runtime.smoothedTip, width, height, amount, runtime.strength);
+  } else if (runtime.phase === "snapping") {
+    const progress = clamp((now - runtime.snapStartedAt) / GUM_SNAP_DURATION, 0, 1);
+    const eased = easeSpring(progress);
+    const snapTip = mixPoint(runtime.snapStartTip, runtime.anchor, eased);
+    drawNoseStretchPixels(ctx, motion, runtime.anchor, snapTip, width, height, amount, 1 - progress * 0.35);
+    if (progress >= 1) {
+      runtime.phase = "idle";
+    }
+  }
+
+  nosePullRuntimes.set(ctx.canvas, runtime);
+};
+
 const drawCharacterHalo = (
   ctx: CanvasRenderingContext2D,
   frame: CharacterFrame,
@@ -1689,6 +1879,458 @@ const drawCharacterFilter = (
   }
 };
 
+const getFaceCanvasMetrics = (face: TrackedFace, width: number, height: number) => {
+  const boundsMin = pointToCanvas({ x: face.bounds.maxX, y: face.bounds.minY }, width, height);
+  const boundsMax = pointToCanvas({ x: face.bounds.minX, y: face.bounds.maxY }, width, height);
+  const faceWidth = Math.max(24, boundsMax.x - boundsMin.x);
+  const faceHeight = Math.max(24, boundsMax.y - boundsMin.y);
+  const center = pointToCanvas(face.center, width, height);
+  const leftEye = face.leftEye ? pointToCanvas(face.leftEye, width, height) : undefined;
+  const rightEye = face.rightEye ? pointToCanvas(face.rightEye, width, height) : undefined;
+  const angle = leftEye && rightEye ? Math.atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x) : 0;
+
+  return {
+    angle,
+    boundsMin,
+    boundsMax,
+    center,
+    faceHeight,
+    faceWidth,
+    mouth: face.upperLip && face.lowerLip ? pointToCanvas({
+      x: (face.upperLip.x + face.lowerLip.x) / 2,
+      y: (face.upperLip.y + face.lowerLip.y) / 2
+    }, width, height) : center
+  };
+};
+
+const clipFaceOval = (
+  ctx: CanvasRenderingContext2D,
+  center: Vec2,
+  faceWidth: number,
+  faceHeight: number,
+  scale = 1
+) => {
+  ctx.beginPath();
+  ctx.ellipse(center.x, center.y, faceWidth * 0.58 * scale, faceHeight * 0.58 * scale, 0, 0, Math.PI * 2);
+  ctx.clip();
+};
+
+const drawFaceConnectionPaths = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  width: number,
+  height: number,
+  stroke: string,
+  lineWidth: number
+) => {
+  FACE_CONNECTIONS.forEach((connection) => {
+    ctx.beginPath();
+    connection.forEach((index, pointIndex) => {
+      const landmark = face.landmarks[index];
+      if (!landmark) return;
+      const point = pointToCanvas(landmark, width, height);
+      if (pointIndex === 0) {
+        ctx.moveTo(point.x, point.y);
+      } else {
+        ctx.lineTo(point.x, point.y);
+      }
+    });
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = lineWidth;
+    ctx.stroke();
+  });
+};
+
+const drawChromeMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  const shine = 0.2 + motion.face!.smile * 0.3 + motion.face!.mouthOpenness * 0.28;
+
+  ctx.save();
+  clipFaceOval(ctx, metrics.center, metrics.faceWidth, metrics.faceHeight, 1.02);
+  const chrome = ctx.createLinearGradient(
+    metrics.boundsMin.x,
+    metrics.boundsMin.y,
+    metrics.boundsMax.x,
+    metrics.boundsMax.y
+  );
+  chrome.addColorStop(0, `rgba(208, 255, 255, ${0.12 + amount * 0.18})`);
+  chrome.addColorStop(0.26, `rgba(20, 42, 48, ${0.18 + amount * 0.22})`);
+  chrome.addColorStop(0.48, `rgba(247, 255, 255, ${0.32 + shine})`);
+  chrome.addColorStop(0.68, `rgba(74, 118, 132, ${0.18 + amount * 0.18})`);
+  chrome.addColorStop(1, `rgba(255, 230, 162, ${0.1 + amount * 0.16})`);
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = chrome;
+  ctx.fillRect(metrics.boundsMin.x - metrics.faceWidth * 0.2, metrics.boundsMin.y, metrics.faceWidth * 1.4, metrics.faceHeight);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.strokeStyle = "rgba(231, 255, 255, 0.88)";
+  ctx.lineWidth = Math.max(1.5, metrics.faceWidth * 0.012);
+  drawFaceConnectionPaths(ctx, face, width, height, "rgba(235, 255, 255, 0.32)", Math.max(1, metrics.faceWidth * 0.005));
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = "rgba(180, 255, 255, 0.78)";
+  ctx.shadowColor = "rgba(120, 248, 255, 0.72)";
+  ctx.shadowBlur = 14 * amount;
+  ctx.lineWidth = Math.max(2, metrics.faceWidth * 0.018);
+  ctx.beginPath();
+  ctx.ellipse(metrics.center.x, metrics.center.y, metrics.faceWidth * 0.58, metrics.faceHeight * 0.58, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+};
+
+const drawWireSkullMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.shadowColor = "rgba(226, 255, 232, 0.9)";
+  ctx.shadowBlur = 10 * amount;
+  drawFaceConnectionPaths(ctx, face, width, height, "rgba(220, 255, 232, 0.82)", Math.max(1.2, metrics.faceWidth * 0.007));
+  ctx.strokeStyle = "rgba(255, 238, 177, 0.78)";
+  ctx.lineWidth = Math.max(1.8, metrics.faceWidth * 0.014);
+  ctx.beginPath();
+  ctx.ellipse(metrics.center.x, metrics.center.y - metrics.faceHeight * 0.03, metrics.faceWidth * 0.42, metrics.faceHeight * 0.47, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  if (face.mouthLeft && face.mouthRight) {
+    const left = pointToCanvas(face.mouthLeft, width, height);
+    const right = pointToCanvas(face.mouthRight, width, height);
+    for (let i = 0; i < 7; i += 1) {
+      const x = left.x + ((right.x - left.x) * i) / 6;
+      ctx.beginPath();
+      ctx.moveTo(x, metrics.mouth.y - metrics.faceHeight * 0.035);
+      ctx.lineTo(x, metrics.mouth.y + metrics.faceHeight * (0.05 + motion.face!.mouthOpenness * 0.05));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+};
+
+const drawThermalFaceMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  const heat = clamp(motion.face!.mouthOpenness * 0.44 + motion.face!.smile * 0.28 + motion.face!.frown * 0.24, 0, 1);
+
+  ctx.save();
+  clipFaceOval(ctx, metrics.center, metrics.faceWidth, metrics.faceHeight, 1.06);
+  const thermal = ctx.createRadialGradient(metrics.mouth.x, metrics.mouth.y, 0, metrics.center.x, metrics.center.y, metrics.faceHeight * 0.72);
+  thermal.addColorStop(0, `rgba(255, 245, 120, ${0.18 + heat * 0.42})`);
+  thermal.addColorStop(0.25, `rgba(255, 82, 80, ${0.16 + amount * 0.22})`);
+  thermal.addColorStop(0.58, `rgba(62, 216, 255, ${0.12 + amount * 0.2})`);
+  thermal.addColorStop(1, "rgba(34, 22, 118, 0)");
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = thermal;
+  ctx.fillRect(metrics.boundsMin.x - metrics.faceWidth * 0.3, metrics.boundsMin.y - metrics.faceHeight * 0.2, metrics.faceWidth * 1.6, metrics.faceHeight * 1.4);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  for (let i = 0; i < 8; i += 1) {
+    const y = metrics.boundsMin.y + (metrics.faceHeight * (i + 1)) / 9;
+    ctx.strokeStyle = `hsla(${198 - i * 18 + heat * 70}, 100%, 64%, ${0.18 + amount * 0.22})`;
+    ctx.lineWidth = Math.max(1, metrics.faceWidth * 0.006);
+    ctx.beginPath();
+    ctx.ellipse(metrics.center.x, y, metrics.faceWidth * (0.18 + i * 0.035), metrics.faceHeight * 0.025, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+};
+
+const drawCrackedPorcelainMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  ctx.save();
+  clipFaceOval(ctx, metrics.center, metrics.faceWidth, metrics.faceHeight, 1.02);
+  ctx.globalCompositeOperation = "screen";
+  ctx.fillStyle = `rgba(245, 248, 242, ${0.12 + amount * 0.24})`;
+  ctx.fillRect(metrics.boundsMin.x, metrics.boundsMin.y, metrics.faceWidth, metrics.faceHeight);
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalCompositeOperation = "multiply";
+  ctx.strokeStyle = `rgba(22, 27, 30, ${0.28 + amount * 0.35})`;
+  ctx.lineWidth = Math.max(1, metrics.faceWidth * 0.006);
+  const crackEnergy = 0.6 + motion.face!.frown * 0.6 + motion.face!.mouthOpenness * 0.3;
+  for (let i = 0; i < 12; i += 1) {
+    const seed = i * 9.71;
+    const start = {
+      x: metrics.center.x + (randomUnit(seed) - 0.5) * metrics.faceWidth * 0.72,
+      y: metrics.center.y + (randomUnit(seed + 2) - 0.5) * metrics.faceHeight * 0.78
+    };
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    for (let step = 1; step < 4; step += 1) {
+      ctx.lineTo(
+        start.x + (randomUnit(seed + step * 3) - 0.5) * metrics.faceWidth * 0.28 * crackEnergy * step,
+        start.y + (randomUnit(seed + step * 4) - 0.5) * metrics.faceHeight * 0.22 * crackEnergy * step
+      );
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
+};
+
+const drawCyberVisorMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  const leftEye = averageFaceLandmarks(face, FACE_LEFT_EYE_INDICES);
+  const rightEye = averageFaceLandmarks(face, FACE_RIGHT_EYE_INDICES);
+  if (!leftEye || !rightEye) return;
+  const left = pointToCanvas(leftEye, width, height);
+  const right = pointToCanvas(rightEye, width, height);
+  const eyeCenter = { x: (left.x + right.x) / 2, y: (left.y + right.y) / 2 };
+  const visorWidth = Math.max(metrics.faceWidth * 0.76, Math.abs(right.x - left.x) * 1.55);
+  const visorHeight = metrics.faceHeight * (0.16 + motion.face!.eyeClosure * 0.05);
+
+  ctx.save();
+  ctx.translate(eyeCenter.x, eyeCenter.y);
+  ctx.rotate(metrics.angle);
+  ctx.globalCompositeOperation = "screen";
+  ctx.shadowColor = "rgba(42, 236, 255, 0.96)";
+  ctx.shadowBlur = 18 * amount;
+  const visor = ctx.createLinearGradient(-visorWidth / 2, 0, visorWidth / 2, 0);
+  visor.addColorStop(0, "rgba(24, 255, 219, 0.12)");
+  visor.addColorStop(0.5, `rgba(56, 244, 255, ${0.2 + amount * 0.42})`);
+  visor.addColorStop(1, "rgba(255, 70, 196, 0.24)");
+  ctx.fillStyle = visor;
+  drawRoundedRect(ctx, -visorWidth / 2, -visorHeight / 2, visorWidth, visorHeight, visorHeight * 0.38);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(117, 252, 255, 0.86)";
+  ctx.lineWidth = Math.max(2, metrics.faceWidth * 0.014);
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255, 88, 206, 0.62)";
+  ctx.lineWidth = Math.max(1, metrics.faceWidth * 0.006);
+  for (let line = -2; line <= 2; line += 1) {
+    const y = line * visorHeight * 0.18 + Math.sin(motion.timestamp / 140 + line) * visorHeight * 0.05;
+    ctx.beginPath();
+    ctx.moveTo(-visorWidth * 0.43, y);
+    ctx.lineTo(visorWidth * 0.43, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+};
+
+const drawContourPaintMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const phase = motion.timestamp / 260;
+  for (let i = 0; i < 9; i += 1) {
+    const scale = 0.24 + i * 0.055 + Math.sin(phase + i) * 0.012;
+    ctx.strokeStyle = `hsla(${(i * 34 + phase * 8) % 360}, 100%, ${58 + i * 3}%, ${0.16 + amount * 0.18})`;
+    ctx.lineWidth = Math.max(1.4, metrics.faceWidth * (0.006 + i * 0.0008));
+    ctx.beginPath();
+    ctx.ellipse(metrics.center.x, metrics.center.y, metrics.faceWidth * scale, metrics.faceHeight * scale * 1.12, metrics.angle * 0.25, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  drawFaceConnectionPaths(ctx, face, width, height, `rgba(255, 250, 190, ${0.18 + amount * 0.2})`, Math.max(1, metrics.faceWidth * 0.004));
+  ctx.restore();
+};
+
+const drawCreatureFaceMask = (
+  ctx: CanvasRenderingContext2D,
+  face: TrackedFace,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  const mouthOpen = motion.face!.mouthOpenness;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  const aura = ctx.createRadialGradient(metrics.center.x, metrics.center.y, 0, metrics.center.x, metrics.center.y, metrics.faceHeight * 0.8);
+  aura.addColorStop(0, `rgba(132, 255, 126, ${0.08 + amount * 0.18})`);
+  aura.addColorStop(0.58, `rgba(56, 216, 112, ${0.08 + mouthOpen * 0.22})`);
+  aura.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = aura;
+  ctx.fillRect(metrics.boundsMin.x - metrics.faceWidth * 0.3, metrics.boundsMin.y - metrics.faceHeight * 0.35, metrics.faceWidth * 1.6, metrics.faceHeight * 1.7);
+
+  [-1, 1].forEach((side) => {
+    ctx.fillStyle = "rgba(158, 255, 146, 0.42)";
+    ctx.strokeStyle = "rgba(228, 255, 172, 0.9)";
+    ctx.lineWidth = Math.max(1.5, metrics.faceWidth * 0.012);
+    ctx.beginPath();
+    ctx.moveTo(metrics.center.x + side * metrics.faceWidth * 0.16, metrics.center.y - metrics.faceHeight * 0.45);
+    ctx.lineTo(metrics.center.x + side * metrics.faceWidth * 0.28, metrics.center.y - metrics.faceHeight * (0.78 + amount * 0.06));
+    ctx.lineTo(metrics.center.x + side * metrics.faceWidth * 0.38, metrics.center.y - metrics.faceHeight * 0.37);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  if (face.mouthLeft && face.mouthRight) {
+    const left = pointToCanvas(face.mouthLeft, width, height);
+    const right = pointToCanvas(face.mouthRight, width, height);
+    ctx.strokeStyle = "rgba(255, 248, 220, 0.9)";
+    ctx.lineWidth = Math.max(1.4, metrics.faceWidth * 0.01);
+    for (let i = 0; i < 6; i += 1) {
+      const x = left.x + ((right.x - left.x) * i) / 5;
+      ctx.beginPath();
+      ctx.moveTo(x, metrics.mouth.y - metrics.faceHeight * 0.02);
+      ctx.lineTo(x + (i % 2 ? -1 : 1) * metrics.faceWidth * 0.015, metrics.mouth.y + metrics.faceHeight * (0.05 + mouthOpen * 0.12));
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+};
+
+const drawLiveMask = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number,
+  selectedEffect: string
+) => {
+  if (!motion.face) return;
+  if (selectedEffect === "chromeMask") {
+    drawChromeMask(ctx, motion.face, motion, width, height, amount);
+  } else if (selectedEffect === "wireSkull") {
+    drawWireSkullMask(ctx, motion.face, motion, width, height, amount);
+  } else if (selectedEffect === "thermalFace") {
+    drawThermalFaceMask(ctx, motion.face, motion, width, height, amount);
+  } else if (selectedEffect === "crackedPorcelain") {
+    drawCrackedPorcelainMask(ctx, motion.face, motion, width, height, amount);
+  } else if (selectedEffect === "cyberVisor") {
+    drawCyberVisorMask(ctx, motion.face, motion, width, height, amount);
+  } else if (selectedEffect === "contourPaint") {
+    drawContourPaintMask(ctx, motion.face, motion, width, height, amount);
+  } else if (selectedEffect === "creatureFace") {
+    drawCreatureFaceMask(ctx, motion.face, motion, width, height, amount);
+  }
+};
+
+const drawExpressionPersona = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number
+) => {
+  const face = motion.face;
+  if (!face) return;
+
+  const smile = clamp(face.smile * amount, 0, 1);
+  const frown = clamp(face.frown * amount, 0, 1);
+  const mouth = clamp(face.mouthOpenness * amount, 0, 1);
+  const eyes = clamp(face.eyeClosure * amount, 0, 1);
+  const metrics = getFaceCanvasMetrics(face, width, height);
+  const cache = expressionPersonaFrameCache.get(ctx.canvas) ?? document.createElement("canvas");
+  if (cache.width !== width || cache.height !== height) {
+    cache.width = width;
+    cache.height = height;
+  }
+  const cacheCtx = cache.getContext("2d");
+
+  if (smile > 0.03) {
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.globalAlpha = 0.2 + smile * 0.45;
+    ctx.filter = `blur(${Math.round(8 + smile * 18)}px) saturate(${1.25 + smile * 1.4})`;
+    ctx.drawImage(ctx.canvas, -width * 0.01 * smile, -height * 0.01 * smile, width * (1 + smile * 0.02), height * (1 + smile * 0.02));
+    ctx.filter = "none";
+    const bloom = ctx.createRadialGradient(metrics.center.x, metrics.center.y, 0, metrics.center.x, metrics.center.y, metrics.faceHeight * 0.9);
+    bloom.addColorStop(0, `rgba(255, 225, 122, ${0.22 * smile})`);
+    bloom.addColorStop(0.52, `rgba(95, 255, 214, ${0.12 * smile})`);
+    bloom.addColorStop(1, "rgba(0, 0, 0, 0)");
+    ctx.fillStyle = bloom;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+
+  if (frown > 0.03) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = `rgba(8, 12, 18, ${0.08 + frown * 0.18})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "screen";
+    for (let i = 0; i < 10; i += 1) {
+      const y = Math.floor((height * i) / 10 + Math.sin(motion.timestamp / 90 + i) * 8);
+      const sliceHeight = Math.max(3, Math.floor(height * (0.008 + frown * 0.014)));
+      const shift = Math.sin(motion.timestamp / 70 + i * 2.1) * width * 0.026 * frown;
+      ctx.globalAlpha = 0.12 + frown * 0.22;
+      ctx.drawImage(ctx.canvas, 0, y, width, sliceHeight, shift, y, width, sliceHeight);
+    }
+    ctx.restore();
+  }
+
+  if (mouth > 0.03) {
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    const pulse = 0.5 + Math.sin(motion.timestamp / 55) * 0.5;
+    for (let ring = 0; ring < 6; ring += 1) {
+      const radius = metrics.faceWidth * (0.16 + ring * 0.12 + pulse * 0.04 * mouth);
+      ctx.strokeStyle = `rgba(255, ${155 + ring * 12}, 94, ${0.2 * mouth * (1 - ring * 0.08)})`;
+      ctx.lineWidth = Math.max(2, metrics.faceWidth * (0.01 + mouth * 0.012));
+      ctx.beginPath();
+      ctx.arc(metrics.mouth.x, metrics.mouth.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 0.16 + mouth * 0.22;
+    ctx.filter = `blur(${Math.round(2 + mouth * 8)}px)`;
+    ctx.drawImage(ctx.canvas, metrics.mouth.x - width * 0.52, metrics.mouth.y - height * 0.52, width * 1.04, height * 1.04);
+    ctx.restore();
+  }
+
+  if (eyes > 0.03 && cacheCtx) {
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 0.18 + eyes * 0.42;
+    ctx.filter = `blur(${Math.round(4 + eyes * 14)}px)`;
+    ctx.drawImage(cache, 0, 0, width, height);
+    ctx.filter = "none";
+    ctx.fillStyle = `rgba(0, 0, 0, ${0.08 + eyes * 0.38})`;
+    ctx.fillRect(0, 0, width, height);
+    ctx.restore();
+  }
+
+  if (cacheCtx) {
+    cacheCtx.clearRect(0, 0, width, height);
+    cacheCtx.globalAlpha = 0.82;
+    cacheCtx.drawImage(ctx.canvas, 0, 0, width, height);
+    expressionPersonaFrameCache.set(ctx.canvas, cache);
+  }
+};
+
 const drawMetricTag = (
   ctx: CanvasRenderingContext2D,
   point: Vec2,
@@ -1890,6 +2532,279 @@ const drawRig = (
       drawPoint(ctx, point, HAND_TIP_INDICES.includes(index) ? 4.5 : 2.8, index === 0 ? "#ffffff" : "#f8f16a");
     });
   });
+};
+
+const visiblePosePoint = (pose: TrackedPose, index: number) => {
+  const point = pose.landmarks[index];
+  if (!point || (point.visibility ?? 1) < 0.2) return undefined;
+  return point;
+};
+
+const drawPosePolygon = (
+  ctx: CanvasRenderingContext2D,
+  pose: TrackedPose,
+  indices: number[],
+  width: number,
+  height: number,
+  fill: string,
+  stroke: string,
+  lineWidth: number
+) => {
+  const points = indices.map((index) => visiblePosePoint(pose, index)).filter((point): point is Landmark => Boolean(point));
+  if (points.length < 3) return;
+
+  ctx.beginPath();
+  points.forEach((point, index) => {
+    const canvasPoint = pointToCanvas(point, width, height);
+    if (index === 0) {
+      ctx.moveTo(canvasPoint.x, canvasPoint.y);
+    } else {
+      ctx.lineTo(canvasPoint.x, canvasPoint.y);
+    }
+  });
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.fill();
+  ctx.stroke();
+};
+
+const drawPoseHeatDisc = (
+  ctx: CanvasRenderingContext2D,
+  center: Vec2,
+  radius: number,
+  innerColor: string,
+  outerColor: string
+) => {
+  const glow = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, radius);
+  glow.addColorStop(0, innerColor);
+  glow.addColorStop(0.48, innerColor.replace("0.78", "0.28").replace("0.72", "0.24"));
+  glow.addColorStop(1, outerColor);
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+  ctx.fill();
+};
+
+const drawBodyWireWrap = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const pose = motion.pose;
+  if (!pose?.landmarks.length) return;
+
+  const lineWidth = Math.max(1.4, Math.min(width, height) * 0.0045 * amount);
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.shadowColor = "rgba(84, 247, 255, 0.9)";
+  ctx.shadowBlur = 12 * amount;
+
+  drawPosePolygon(
+    ctx,
+    pose,
+    [11, 12, 24, 23],
+    width,
+    height,
+    `rgba(32, 248, 255, ${0.055 + amount * 0.05})`,
+    `rgba(110, 252, 255, ${0.38 + amount * 0.22})`,
+    lineWidth
+  );
+
+  FULL_POSE_CONNECTIONS.forEach(([start, end], index) => {
+    const a = visiblePosePoint(pose, start);
+    const b = visiblePosePoint(pose, end);
+    if (!a || !b) return;
+    const from = pointToCanvas(a, width, height);
+    const to = pointToCanvas(b, width, height);
+    const stroke = index % 3 === 0 ? "rgba(255, 224, 108, 0.86)" : "rgba(84, 247, 255, 0.88)";
+    drawLine(ctx, from, to, lineWidth, stroke, stroke);
+
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 18) return;
+    const normal = { x: -dy / length, y: dx / length };
+    for (let band = 1; band <= 3; band += 1) {
+      const t = band / 4;
+      const wobble = Math.sin(motion.timestamp / 180 + index * 0.8 + band) * 0.35;
+      const center = { x: from.x + dx * t, y: from.y + dy * t };
+      const span = Math.max(8, Math.min(34, length * 0.12) * (0.9 + amount * 0.28));
+      ctx.beginPath();
+      ctx.moveTo(center.x - normal.x * span * (1 + wobble), center.y - normal.y * span * (1 - wobble));
+      ctx.lineTo(center.x + normal.x * span * (1 - wobble), center.y + normal.y * span * (1 + wobble));
+      ctx.strokeStyle = `rgba(180, 255, 244, ${0.16 + amount * 0.18})`;
+      ctx.lineWidth = Math.max(1, lineWidth * 0.45);
+      ctx.stroke();
+    }
+  });
+
+  pose.landmarks.forEach((landmark, index) => {
+    if ((landmark.visibility ?? 1) < 0.25) return;
+    const point = pointToCanvas(landmark, width, height);
+    const major = [0, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28].includes(index);
+    drawPoint(ctx, point, major ? 4.4 * amount : 2.4 * amount, major ? "rgba(255, 235, 142, 0.92)" : "rgba(194, 255, 248, 0.68)");
+  });
+  ctx.restore();
+};
+
+const drawBodyThermalMap = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const pose = motion.pose;
+  if (!pose?.landmarks.length) return;
+
+  const energy = clamp(0.42 + motion.confidence * 0.28 + motion.hands.reduce((total, hand) => total + hand.velocity, 0) * 0.22, 0, 1.35);
+  const radiusBase = Math.max(34, Math.min(width, height) * (0.06 + amount * 0.035));
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.filter = `blur(${Math.round(3 + amount * 5)}px) saturate(${1.5 + amount * 0.6})`;
+
+  drawPosePolygon(
+    ctx,
+    pose,
+    [11, 12, 24, 23],
+    width,
+    height,
+    `rgba(255, 83, 28, ${0.12 + energy * 0.16})`,
+    `rgba(255, 224, 76, ${0.18 + energy * 0.18})`,
+    Math.max(8, radiusBase * 0.16)
+  );
+
+  FULL_POSE_CONNECTIONS.forEach(([start, end], index) => {
+    const a = visiblePosePoint(pose, start);
+    const b = visiblePosePoint(pose, end);
+    if (!a || !b) return;
+    const from = pointToCanvas(a, width, height);
+    const to = pointToCanvas(b, width, height);
+    const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+    gradient.addColorStop(0, `rgba(22, 210, 255, ${0.2 + amount * 0.12})`);
+    gradient.addColorStop(0.48, `rgba(255, 229, 74, ${0.24 + energy * 0.22})`);
+    gradient.addColorStop(1, `rgba(255, 48, 91, ${0.22 + energy * 0.2})`);
+    ctx.strokeStyle = gradient;
+    ctx.lineCap = "round";
+    ctx.lineWidth = Math.max(16, Math.min(width, height) * (0.025 + amount * 0.012));
+    ctx.shadowColor = index % 2 ? "rgba(255, 70, 82, 0.72)" : "rgba(255, 214, 72, 0.72)";
+    ctx.shadowBlur = radiusBase * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  });
+
+  [0, 11, 12, 15, 16, 23, 24, 27, 28].forEach((index, heatIndex) => {
+    const landmark = visiblePosePoint(pose, index);
+    if (!landmark) return;
+    const point = pointToCanvas(landmark, width, height);
+    const pulse = 0.82 + Math.sin(motion.timestamp / 160 + heatIndex) * 0.18;
+    drawPoseHeatDisc(
+      ctx,
+      point,
+      radiusBase * pulse,
+      `rgba(255, ${index === 0 ? 238 : 128}, 52, ${0.42 + amount * 0.24})`,
+      "rgba(0, 0, 0, 0)"
+    );
+  });
+
+  ctx.filter = "none";
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = `rgba(3, 7, 13, ${0.08 + amount * 0.06})`;
+  ctx.fillRect(0, 0, width, height);
+  ctx.restore();
+};
+
+const drawCyberSuit = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const pose = motion.pose;
+  if (!pose?.landmarks.length) return;
+
+  const shoulderLeft = visiblePosePoint(pose, 11);
+  const shoulderRight = visiblePosePoint(pose, 12);
+  const hipLeft = visiblePosePoint(pose, 23);
+  const hipRight = visiblePosePoint(pose, 24);
+  if (!shoulderLeft || !shoulderRight) return;
+
+  const core = hipLeft && hipRight
+    ? {
+        x: (shoulderLeft.x + shoulderRight.x + hipLeft.x + hipRight.x) / 4,
+        y: (shoulderLeft.y + shoulderRight.y + hipLeft.y + hipRight.y) / 4
+      }
+    : { x: (shoulderLeft.x + shoulderRight.x) / 2, y: (shoulderLeft.y + shoulderRight.y) / 2 + 0.12 };
+  const coreCanvas = pointToCanvas(core, width, height);
+  const suitLine = Math.max(2, Math.min(width, height) * 0.006 * amount);
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.shadowColor = "rgba(0, 231, 255, 0.84)";
+  ctx.shadowBlur = 14 * amount;
+
+  drawPosePolygon(
+    ctx,
+    pose,
+    [11, 12, 24, 23],
+    width,
+    height,
+    `rgba(0, 231, 255, ${0.08 + amount * 0.07})`,
+    `rgba(0, 231, 255, ${0.64 + amount * 0.18})`,
+    suitLine
+  );
+
+  [
+    [11, 13],
+    [13, 15],
+    [12, 14],
+    [14, 16],
+    [23, 25],
+    [25, 27],
+    [24, 26],
+    [26, 28]
+  ].forEach(([start, end], index) => {
+    const a = visiblePosePoint(pose, start);
+    const b = visiblePosePoint(pose, end);
+    if (!a || !b) return;
+    const from = pointToCanvas(a, width, height);
+    const to = pointToCanvas(b, width, height);
+    drawLine(ctx, from, to, suitLine * 1.6, index % 2 ? "rgba(255, 218, 94, 0.74)" : "rgba(94, 255, 207, 0.82)", "rgba(0, 231, 255, 0.8)");
+    const plateCenter = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 };
+    const plateWidth = Math.max(18, distance(from, to) * 0.18);
+    drawRoundedRect(ctx, plateCenter.x - plateWidth / 2, plateCenter.y - suitLine * 2.2, plateWidth, suitLine * 4.4, suitLine * 1.7);
+    ctx.fillStyle = `rgba(5, 22, 28, ${0.38 + amount * 0.16})`;
+    ctx.strokeStyle = "rgba(224, 255, 247, 0.58)";
+    ctx.lineWidth = Math.max(1, suitLine * 0.42);
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  const coreRadius = Math.max(20, Math.min(width, height) * (0.035 + amount * 0.018));
+  const pulse = 0.76 + Math.sin(motion.timestamp / 120) * 0.24;
+  drawPoseHeatDisc(ctx, coreCanvas, coreRadius * (1.4 + pulse * 0.35), `rgba(255, 222, 87, ${0.28 + amount * 0.18})`, "rgba(0, 0, 0, 0)");
+  ctx.strokeStyle = "rgba(255, 241, 166, 0.92)";
+  ctx.lineWidth = Math.max(2, suitLine);
+  ctx.beginPath();
+  ctx.arc(coreCanvas.x, coreCanvas.y, coreRadius * (0.58 + pulse * 0.12), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(coreCanvas.x, coreCanvas.y, coreRadius, 0, Math.PI * 2);
+  ctx.stroke();
+
+  [11, 12, 15, 16, 23, 24, 27, 28].forEach((index) => {
+    const landmark = visiblePosePoint(pose, index);
+    if (!landmark) return;
+    drawPoint(ctx, pointToCanvas(landmark, width, height), Math.max(4, suitLine * 1.6), "rgba(242, 255, 232, 0.9)");
+  });
+  ctx.restore();
+};
+
+const drawBodyEffect = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number,
+  selectedEffect: string
+) => {
+  if (selectedEffect === "bodyWire") {
+    drawBodyWireWrap(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "bodyThermal") {
+    drawBodyThermalMap(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "cyberSuit") {
+    drawCyberSuit(ctx, motion, width, height, amount);
+  }
 };
 
 const drawGuideLabel = (ctx: CanvasRenderingContext2D, point: Vec2, label: string, color: string) => {
@@ -2480,14 +3395,29 @@ export const renderFrame = (
   }
 
   const baseAmount = Math.max(0.22, options.effectAmount);
+  const showGestureOverlays = options.showGestureOverlays ?? options.showRig;
+  const activeMaskMode = options.liveMaskMode && options.liveMaskMode !== "none" ? options.liveMaskMode : options.selectedEffect;
   if (options.visualMode === "shader") {
-    if (motion && options.showRig) {
+    if (motion && (options.expressionPersonas || options.selectedEffect === "expressionPersona")) {
+      drawExpressionPersona(ctx, motion, width, height, baseAmount);
+    }
+    if (motion && maskEffectIds.has(activeMaskMode)) {
+      drawLiveMask(ctx, motion, width, height, baseAmount, activeMaskMode);
+    }
+    if (motion && bodyEffectIds.has(options.selectedEffect)) {
+      drawBodyEffect(ctx, motion, width, height, baseAmount, options.selectedEffect);
+    }
+    if (motion && (options.showRig || showGestureOverlays)) {
       const trackingMode = options.trackingMode ?? "upper";
-      if (shouldDrawHandGestureMarkers(trackingMode)) {
+      if (showGestureOverlays && shouldDrawHandGestureMarkers(trackingMode)) {
         drawHandGestureMarkers(ctx, motion, width, height, baseAmount);
       }
-      drawRig(ctx, motion, width, height, trackingMode);
-      drawEffectGuideMarkers(ctx, motion, width, height, baseAmount, options.selectedEffect);
+      if (options.showRig) {
+        drawRig(ctx, motion, width, height, trackingMode);
+      }
+      if (showGestureOverlays) {
+        drawEffectGuideMarkers(ctx, motion, width, height, baseAmount, options.selectedEffect);
+      }
     }
     drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
     if (options.watermark?.enabled) {
@@ -2529,8 +3459,17 @@ export const renderFrame = (
     "caminandes"
   ].includes(options.selectedEffect);
 
+  if (options.expressionPersonas || options.selectedEffect === "expressionPersona") {
+    drawExpressionPersona(ctx, motion, width, height, gestureAmount);
+  }
   if (isCharacterEffect) {
     drawCharacterFilter(ctx, motion, width, height, gestureAmount, options.selectedEffect);
+  }
+  if (maskEffectIds.has(activeMaskMode)) {
+    drawLiveMask(ctx, motion, width, height, gestureAmount, activeMaskMode);
+  }
+  if (bodyEffectIds.has(options.selectedEffect)) {
+    drawBodyEffect(ctx, motion, width, height, gestureAmount, options.selectedEffect);
   }
   if ((shouldRunGestureEffects && motion.gestures.faceCover) || options.selectedEffect === "leaves") {
     drawLeafSprouts(ctx, motion, width, height, gestureAmount);
@@ -2551,7 +3490,7 @@ export const renderFrame = (
     drawGumStretch(ctx, motion, width, height, gestureAmount, "hand");
   }
   if (options.selectedEffect === "nosepull") {
-    drawGumStretch(ctx, motion, width, height, gestureAmount, "face");
+    drawNosePullWarp(ctx, motion, width, height, gestureAmount);
   }
   if (options.selectedEffect === "gumstretch") {
     drawGumStretch(ctx, motion, width, height, gestureAmount, "any");
@@ -2571,13 +3510,17 @@ export const renderFrame = (
   if ((shouldRunGestureEffects && motion.gestures.pinch) || options.selectedEffect === "orbit") {
     drawOrbitOverlays(ctx, motion, width, height, gestureAmount);
   }
-  if (options.showRig) {
+  if (options.showRig || showGestureOverlays) {
     const trackingMode = options.trackingMode ?? "upper";
-    if (shouldDrawHandGestureMarkers(trackingMode)) {
+    if (showGestureOverlays && shouldDrawHandGestureMarkers(trackingMode)) {
       drawHandGestureMarkers(ctx, motion, width, height, gestureAmount);
     }
-    drawRig(ctx, motion, width, height, trackingMode);
-    drawEffectGuideMarkers(ctx, motion, width, height, gestureAmount, options.selectedEffect);
+    if (options.showRig) {
+      drawRig(ctx, motion, width, height, trackingMode);
+    }
+    if (showGestureOverlays) {
+      drawEffectGuideMarkers(ctx, motion, width, height, gestureAmount, options.selectedEffect);
+    }
   }
   drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
   if (options.watermark?.enabled) {

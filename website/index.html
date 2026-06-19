@@ -434,28 +434,40 @@
 
       <section id="output" class="output-band" aria-labelledby="output-title">
         <div class="section-heading output-heading">
-          <p class="eyebrow">Output composition</p>
-          <h2 id="output-title">Send exactly the layers your VJ rig needs.</h2>
+          <p class="eyebrow">Signal routing</p>
+          <h2 id="output-title">Turn motion into playable visual control.</h2>
           <p>
-            Choose a clean shader feed, add tracking wireframe for motion context, or include the
-            live camera layer when the performer should stay visible.
+            Use hand pads, face gestures, and pose signals to drive shader parameters, switch
+            effects, and publish the final feed to Syphon, Spout, or NDI.
           </p>
         </div>
         <div class="output-grid">
           <article class="output-mode">
-            <div class="mode-preview">
-              <img
-                src="./assets/output-shader.jpg"
-                alt="INFINIGHTCapture app with Shader output mode selected"
-                loading="lazy"
-              />
+            <div class="mode-preview feature-preview feature-preview-pads" aria-hidden="true">
+              <div class="preview-toolbar">
+                <span>Control Pads</span>
+                <strong>XY live</strong>
+              </div>
+              <div class="preview-pad-stage">
+                <div class="preview-xy-box">
+                  <span></span>
+                </div>
+                <div class="preview-pad-grid">
+                  <span></span>
+                  <span class="active"></span>
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                  <span class="hot"></span>
+                </div>
+              </div>
             </div>
-            <span class="mode-kicker">Mode 01</span>
-            <h3>Shader only</h3>
-            <p>Send the generated shader visual as a clean Syphon or Spout source.</p>
+            <span class="mode-kicker">Feature 01</span>
+            <h3>Visual pads + XY</h3>
+            <p>Strike six pads, ride XY zones, and map each hand to shader values during a set.</p>
             <div class="mode-infographic mode-infographic-addon mode-shader-only" aria-hidden="true">
               <div class="infographic-stage" aria-hidden="true">
-                <div class="mode-node input-node">Shader Player</div>
+                <div class="mode-node input-node">Pad Surface</div>
                 <div class="shader-vortex">
                   <span></span>
                   <span></span>
@@ -463,34 +475,39 @@
                   <span></span>
                 </div>
                 <div class="uniform-card">
-                  <span>fvMotion</span>
+                  <span>Pad X</span>
                   <i style="--level: 82%"></i>
-                  <span>fvFace</span>
+                  <span>Pad Y</span>
                   <i style="--level: 64%"></i>
-                  <span>fvGestures</span>
+                  <span>Strike</span>
                   <i style="--level: 90%"></i>
                 </div>
                 <div class="mode-output-bus">
-                  <span>Syphon</span>
-                  <span>Spout</span>
+                  <span>Shader params</span>
+                  <span>Pad overlay</span>
                 </div>
               </div>
             </div>
           </article>
           <article class="output-mode">
-            <div class="mode-preview">
-              <img
-                src="./assets/output-shader-wire.jpg"
-                alt="INFINIGHTCapture app with Shader plus Wire output mode selected"
-                loading="lazy"
-              />
+            <div class="mode-preview feature-preview feature-preview-matrix" aria-hidden="true">
+              <div class="preview-toolbar">
+                <span>Gesture Matrix</span>
+                <strong>routes armed</strong>
+              </div>
+              <div class="preview-route-stack">
+                <div><span>Smile</span><i></i><strong>Bloom</strong></div>
+                <div><span>Pinch</span><i></i><strong>Warp</strong></div>
+                <div><span>Hands up</span><i></i><strong>Output</strong></div>
+                <div><span>Eyes closed</span><i></i><strong>Latch</strong></div>
+              </div>
             </div>
-            <span class="mode-kicker">Mode 02</span>
-            <h3>Shader + wireframe</h3>
-            <p>Composite gesture tracking lines over the shader for a mocap-forward look.</p>
+            <span class="mode-kicker">Feature 02</span>
+            <h3>Gesture action matrix</h3>
+            <p>Route started, held, released, repeated, and latched gestures to effects or output changes.</p>
             <div class="mode-infographic mode-infographic-addon mode-shader-wire" aria-hidden="true">
               <div class="infographic-stage" aria-hidden="true">
-                <div class="mode-node input-node">Mocap Signals</div>
+                <div class="mode-node input-node">Gesture Signals</div>
                 <div class="shader-vortex compact">
                   <span></span>
                   <span></span>
@@ -519,25 +536,32 @@
             </div>
           </article>
           <article class="output-mode">
-            <div class="mode-preview">
-              <img
-                src="./assets/output-full-composite.jpg"
-                alt="INFINIGHTCapture app with Full Composite output mode selected"
-                loading="lazy"
-              />
+            <div class="mode-preview feature-preview feature-preview-routing" aria-hidden="true">
+              <div class="preview-toolbar">
+                <span>Output Routing</span>
+                <strong>desktop feed</strong>
+              </div>
+              <div class="preview-routing-map">
+                <div class="preview-source-node">Visual feed</div>
+                <div class="preview-output-nodes">
+                  <span>Syphon</span>
+                  <span>Spout</span>
+                  <span>NDI</span>
+                </div>
+              </div>
             </div>
-            <span class="mode-kicker">Mode 03</span>
-            <h3>Shader + wireframe + camera</h3>
-            <p>Send the full performance feed with camera, tracking, and effects together.</p>
+            <span class="mode-kicker">Feature 03</span>
+            <h3>Live output routing</h3>
+            <p>Publish shader, wireframe, or full camera composite feeds into desktop VJ tools.</p>
             <div class="mode-infographic mode-infographic-addon mode-full-composite" aria-hidden="true">
               <div class="infographic-stage" aria-hidden="true">
                 <div class="camera-silhouette">
                   <span></span>
                 </div>
                 <div class="composite-layers">
-                  <span>Camera</span>
+                  <span>Shader</span>
                   <span>Wireframe</span>
-                  <span>Shader FX</span>
+                  <span>Camera</span>
                 </div>
                 <div class="wire-rig small">
                   <span class="joint head"></span>

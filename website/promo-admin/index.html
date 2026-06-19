@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#02080f" />
+    <title>Promo Admin - INFINIGHTCapture</title>
+    <link rel="icon" type="image/png" href="../assets/brand/infinightcapture_icon.png" />
+    <link rel="stylesheet" href="../styles.css?v=promo-flow-20260619" />
+  </head>
+  <body>
+    <header class="site-header" aria-label="Primary navigation">
+      <a class="brand-mark" href="../" aria-label="INFINIGHTCapture home">
+        <img
+          src="../assets/brand/infinightcapture_horizontal_logo.png"
+          srcset="../assets/brand/infinightcapture_horizontal_logo.png 1x, ../assets/brand/infinightcapture_horizontal_logo_2x.png 2x"
+          width="224"
+          height="69"
+          alt="INFINIGHTCapture"
+        />
+      </a>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="../redeem/">Redeem</a>
+        <a href="../recover/">Recover</a>
+        <a href="../#download">Download</a>
+      </nav>
+    </header>
+
+    <main class="checkout-result">
+      <section class="content-section download-section" aria-labelledby="admin-title">
+        <div class="section-heading">
+          <p class="eyebrow">Private admin</p>
+          <h1 id="admin-title">Generate artist promo codes.</h1>
+          <p>
+            Codes are shown once when created. Send the artist their code and the redeem page URL:
+            <strong>https://infinightcapture.com/redeem/</strong>
+          </p>
+        </div>
+
+        <div class="promo-admin-grid">
+          <form class="recovery-form promo-form" id="promo-admin-form">
+            <label class="form-field">
+              <span>Admin token</span>
+              <input autocomplete="off" name="adminToken" placeholder="Stored in Cloudflare secret" required type="password" />
+            </label>
+            <label class="form-field">
+              <span>Artist name</span>
+              <input autocomplete="name" name="artistName" placeholder="Artist or collaborator name" />
+            </label>
+            <label class="form-field">
+              <span>Artist email</span>
+              <input autocomplete="email" inputmode="email" name="artistEmail" placeholder="artist@example.com" type="email" />
+            </label>
+            <div class="form-row">
+              <label class="form-field">
+                <span>Plan</span>
+                <input name="planLabel" value="Full license" />
+              </label>
+              <label class="form-field">
+                <span>Uses</span>
+                <input min="1" name="maxRedemptions" required type="number" value="1" />
+              </label>
+            </div>
+            <label class="form-field">
+              <span>Expires</span>
+              <input name="expiresAt" type="date" />
+            </label>
+            <label class="form-field">
+              <span>Notes</span>
+              <input name="notes" placeholder="Post, Reel, demo stream, quote, etc." />
+            </label>
+            <button class="button button-primary" type="submit">Generate code</button>
+            <p class="status-note" id="promo-admin-status" role="status" aria-live="polite"></p>
+            <output class="promo-code-output" id="promo-code-output" hidden></output>
+          </form>
+
+          <section class="promo-list-panel" aria-labelledby="promo-list-title">
+            <div class="promo-list-header">
+              <div>
+                <p class="eyebrow">Recent codes</p>
+                <h2 id="promo-list-title">Redemption status</h2>
+              </div>
+              <button class="button button-secondary" id="refresh-promo-codes" type="button">Refresh</button>
+            </div>
+            <div class="promo-list" id="promo-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>INFINIGHTCapture</span>
+      <a href="mailto:hello@infinightcapture.com">hello@infinightcapture.com</a>
+    </footer>
+
+    <script type="module">
+      const form = document.querySelector("#promo-admin-form");
+      const status = document.querySelector("#promo-admin-status");
+      const output = document.querySelector("#promo-code-output");
+      const list = document.querySelector("#promo-list");
+      const refreshButton = document.querySelector("#refresh-promo-codes");
+      const tokenInput = form.elements.adminToken;
+      tokenInput.value = window.localStorage.getItem("infinightPromoAdminToken") || "";
+
+      function tokenHeaders() {
+        return {
+          Authorization: `Bearer ${tokenInput.value}`,
+          "Content-Type": "application/json"
+        };
+      }
+
+      function formatDate(value) {
+        if (!value) return "No expiration";
+        return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
+      }
+
+      async function loadPromoCodes() {
+        if (!tokenInput.value) return;
+        list.textContent = "Loading...";
+        try {
+          const response = await fetch("/api/promo-codes", { headers: tokenHeaders() });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.error || "Could not load promo codes.");
+          }
+          list.replaceChildren(
+            ...(payload.promoCodes || []).map((code) => {
+              const item = document.createElement("article");
+              item.className = "promo-list-item";
+              const identity = document.createElement("div");
+              const name = document.createElement("strong");
+              const plan = document.createElement("span");
+              const meta = document.createElement("div");
+              const status = document.createElement("span");
+              const expiry = document.createElement("span");
+              const revoke = document.createElement("button");
+              name.textContent = code.artist_name || code.artist_email || code.code_prefix;
+              plan.textContent = `${code.plan_label} - ${code.redeemed_count}/${code.max_redemptions} used`;
+              status.textContent = code.status;
+              expiry.textContent = formatDate(code.expires_at);
+              revoke.className = "promo-list-action";
+              revoke.type = "button";
+              revoke.textContent = code.status === "active" ? "Revoke" : "Revoked";
+              revoke.disabled = code.status !== "active";
+              revoke.addEventListener("click", async () => {
+                revoke.disabled = true;
+                try {
+                  const response = await fetch("/api/promo-codes", {
+                    body: JSON.stringify({ id: code.id, status: "revoked" }),
+                    headers: tokenHeaders(),
+                    method: "PATCH"
+                  });
+                  const payload = await response.json().catch(() => ({}));
+                  if (!response.ok) {
+                    throw new Error(payload.error || "Could not revoke code.");
+                  }
+                  await loadPromoCodes();
+                } catch (error) {
+                  status.textContent = error.message || "Could not revoke code.";
+                  revoke.disabled = false;
+                }
+              });
+              identity.append(name, plan);
+              meta.append(status, expiry, revoke);
+              item.append(identity, meta);
+              return item;
+            })
+          );
+          if (!list.children.length) {
+            list.textContent = "No promo codes yet.";
+          }
+        } catch (error) {
+          list.textContent = error.message || "Could not load promo codes.";
+        }
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const submitButton = form.querySelector("button");
+        const formData = new FormData(form);
+        window.localStorage.setItem("infinightPromoAdminToken", tokenInput.value);
+        submitButton.disabled = true;
+        output.hidden = true;
+        status.textContent = "Generating code...";
+
+        try {
+          const response = await fetch("/api/promo-codes", {
+            body: JSON.stringify({
+              artistName: formData.get("artistName"),
+              artistEmail: formData.get("artistEmail"),
+              planLabel: formData.get("planLabel"),
+              maxRedemptions: formData.get("maxRedemptions"),
+              expiresAt: formData.get("expiresAt"),
+              notes: formData.get("notes")
+            }),
+            headers: tokenHeaders(),
+            method: "POST"
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.error || "Could not generate a promo code.");
+          }
+          output.textContent = payload.promoCode.code;
+          output.hidden = false;
+          status.textContent = "Code generated. Copy it now; only the prefix is saved for display later.";
+          await loadPromoCodes();
+        } catch (error) {
+          status.textContent = error.message || "Could not generate a promo code.";
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+
+      refreshButton.addEventListener("click", loadPromoCodes);
+      loadPromoCodes();
+    </script>
+  </body>
+</html>

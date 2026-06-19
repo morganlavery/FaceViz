@@ -18,9 +18,9 @@ const getOrigin = (value = "") => {
 
 const isTrustedAppOrigin = (origin = "") => {
   const normalizedOrigin = getOrigin(origin);
+  const isLocalDevOrigin = /^http:\/\/(?:127\.0\.0\.1|localhost):\d+$/.test(normalizedOrigin);
   return (
-    normalizedOrigin === "http://127.0.0.1:5173" ||
-    normalizedOrigin === "http://localhost:5173" ||
+    isLocalDevOrigin ||
     (packagedAppOrigin && normalizedOrigin === packagedAppOrigin) ||
     origin.startsWith("file://")
   );

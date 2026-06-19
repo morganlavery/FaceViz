@@ -11,6 +11,7 @@ export const gestureControlIds: GestureControlId[] = [
   "faceCover",
   "pinch",
   "openPalm",
+  "doubleFist",
   "fastMotion",
   "mouthOpen",
   "smile",

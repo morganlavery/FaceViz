@@ -9,6 +9,7 @@ export type ShaderMotionSource =
   | "handsUp"
   | "faceCover"
   | "openPalm"
+  | "doubleFist"
   | "mouthOpen"
   | "smile"
   | "frown"
@@ -92,6 +93,7 @@ export const shaderMotionSources: Array<{ id: ShaderMotionSource; label: string 
   { id: "handsUp", label: "Hands up" },
   { id: "faceCover", label: "Face cover" },
   { id: "openPalm", label: "Open palm" },
+  { id: "doubleFist", label: "Double fist" },
   { id: "mouthOpen", label: "Mouth open" },
   { id: "smile", label: "Smile" },
   { id: "frown", label: "Frown" },
@@ -465,6 +467,8 @@ export const getMotionSignalValue = (source: ShaderMotionSource, motion: MotionF
       return uniforms.gestures[1];
     case "openPalm":
       return uniforms.gestures[2];
+    case "doubleFist":
+      return motion?.gestures.doubleFist ? 1 : 0;
     case "mouthOpen":
       return uniforms.face[0];
     case "smile":

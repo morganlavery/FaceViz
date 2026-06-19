@@ -24,6 +24,10 @@ export function normalizeEmail(email = "") {
   return String(email).trim().toLowerCase();
 }
 
+export function normalizePromoCode(code = "") {
+  return String(code).trim().toUpperCase().replace(/\s+/g, "-");
+}
+
 export function isEmailLike(email = "") {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
@@ -77,7 +81,7 @@ function bytesToHex(bytes) {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function constantTimeEqual(left, right) {
+export function constantTimeEqual(left, right) {
   if (left.length !== right.length) return false;
 
   let diff = 0;
@@ -85,6 +89,30 @@ function constantTimeEqual(left, right) {
     diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
   }
   return diff === 0;
+}
+
+function promoCodeSecret(env) {
+  return env.PROMO_CODE_SECRET || env.DOWNLOAD_TOKEN_SECRET;
+}
+
+export async function hashPromoCode(env, code) {
+  const secret = promoCodeSecret(env);
+  if (!secret) {
+    throw new Error("PROMO_CODE_SECRET or DOWNLOAD_TOKEN_SECRET is not configured.");
+  }
+  return bytesToHex(await hmac(secret, normalizePromoCode(code)));
+}
+
+export function createHumanPromoCode(label = "ARTIST") {
+  const prefix = normalizePromoCode(label)
+    .replace(/[^A-Z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 12) || "ARTIST";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  const suffix = bytesToBase64Url(bytes).slice(0, 8).toUpperCase();
+  return `${prefix}-${suffix}`;
 }
 
 async function hmac(secret, value) {
@@ -256,6 +284,167 @@ export async function savePaidCheckoutSession(env, session) {
   return purchase;
 }
 
+export async function createPromoPurchase(env, { code, email, promoCode, recipientName }) {
+  if (!env.PURCHASES_DB) {
+    return null;
+  }
+
+  const normalizedEmail = normalizeEmail(email);
+  if (!isEmailLike(normalizedEmail)) {
+    throw new Error("Enter a valid artist email.");
+  }
+
+  const now = new Date().toISOString();
+  const redemptionId = `promo_redemption_${crypto.randomUUID()}`;
+  const purchase = {
+    amount_total: 0,
+    created_at: now,
+    currency: "usd",
+    email,
+    id: `purchase_${crypto.randomUUID()}`,
+    license_status: "active",
+    normalized_email: normalizedEmail,
+    stripe_customer_id: null,
+    stripe_payment_intent: null,
+    stripe_price_id: null,
+    stripe_product_id: null,
+    stripe_session_id: redemptionId,
+    updated_at: now
+  };
+
+  await env.PURCHASES_DB.prepare(
+    `INSERT INTO purchases (
+       id,
+       email,
+       normalized_email,
+       stripe_session_id,
+       stripe_payment_intent,
+       stripe_customer_id,
+       stripe_product_id,
+       stripe_price_id,
+       amount_total,
+       currency,
+       license_status,
+       created_at,
+       updated_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)`
+  )
+    .bind(
+      purchase.id,
+      purchase.email,
+      purchase.normalized_email,
+      purchase.stripe_session_id,
+      purchase.stripe_payment_intent,
+      purchase.stripe_customer_id,
+      purchase.stripe_product_id,
+      purchase.stripe_price_id,
+      purchase.amount_total,
+      purchase.currency,
+      purchase.license_status,
+      purchase.created_at,
+      purchase.updated_at
+    )
+    .run();
+
+  await env.PURCHASES_DB.prepare(
+    `INSERT INTO promo_redemptions (
+       id,
+       promo_code_id,
+       purchase_id,
+       email,
+       normalized_email,
+       recipient_name,
+       redeemed_at
+     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`
+  )
+    .bind(redemptionId, promoCode.id, purchase.id, email, normalizedEmail, recipientName || null, now)
+    .run();
+
+  await env.PURCHASES_DB.prepare(
+    `UPDATE promo_codes
+     SET redeemed_count = redeemed_count + 1,
+         updated_at = ?1
+     WHERE id = ?2`
+  )
+    .bind(now, promoCode.id)
+    .run();
+
+  return { ...purchase, promo_code: code };
+}
+
+export async function redeemPromoCode(env, { code, email, recipientName }) {
+  if (!env.PURCHASES_DB) {
+    return { ok: false, status: 503, error: "Promo redemption is not configured yet." };
+  }
+
+  const normalizedCode = normalizePromoCode(code);
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedCode) {
+    return { ok: false, status: 400, error: "Enter your promo code." };
+  }
+  if (!isEmailLike(normalizedEmail)) {
+    return { ok: false, status: 400, error: "Enter a valid email." };
+  }
+
+  const codeHash = await hashPromoCode(env, normalizedCode);
+  const promoCode = await env.PURCHASES_DB.prepare(
+    `SELECT *
+     FROM promo_codes
+     WHERE code_hash = ?1
+     LIMIT 1`
+  )
+    .bind(codeHash)
+    .first();
+
+  if (!promoCode || promoCode.status !== "active") {
+    return { ok: false, status: 404, error: "That promo code is not active." };
+  }
+
+  if (promoCode.expires_at && new Date(promoCode.expires_at).getTime() < Date.now()) {
+    return { ok: false, status: 410, error: "That promo code has expired." };
+  }
+
+  if (promoCode.normalized_artist_email && promoCode.normalized_artist_email !== normalizedEmail) {
+    return { ok: false, status: 403, error: "That promo code is assigned to a different email." };
+  }
+
+  const existingRedemption = await env.PURCHASES_DB.prepare(
+    `SELECT purchase_id
+     FROM promo_redemptions
+     WHERE promo_code_id = ?1
+       AND normalized_email = ?2
+     LIMIT 1`
+  )
+    .bind(promoCode.id, normalizedEmail)
+    .first();
+  if (existingRedemption) {
+    const existingPurchase = await env.PURCHASES_DB.prepare(
+      `SELECT *
+       FROM purchases
+       WHERE id = ?1
+         AND license_status = 'active'
+       LIMIT 1`
+    )
+      .bind(existingRedemption.purchase_id)
+      .first();
+    if (existingPurchase) {
+      return { ok: true, purchase: existingPurchase, alreadyRedeemed: true, promoCode };
+    }
+  }
+
+  if (promoCode.max_redemptions && promoCode.redeemed_count >= promoCode.max_redemptions) {
+    return { ok: false, status: 409, error: "That promo code has already been used." };
+  }
+
+  const purchase = await createPromoPurchase(env, {
+    code: normalizedCode,
+    email: normalizedEmail,
+    promoCode,
+    recipientName
+  });
+  return { ok: true, purchase, alreadyRedeemed: false, promoCode };
+}
+
 export async function findLatestPurchaseByEmail(env, email) {
   if (!env.PURCHASES_DB) {
     return null;
@@ -278,14 +467,19 @@ export async function findLatestPurchaseByEmail(env, email) {
     .first();
 }
 
-export async function sendDownloadEmail(env, { downloadUrl, to }) {
+export async function sendDownloadEmail(env, { downloadUrl, intro, recovered = false, to }) {
   const supportEmail = env.SUPPORT_EMAIL || "hello@infinightcapture.com";
   const from = parseSender(env.FROM_EMAIL || "INFINIGHTCapture <downloads@infinightcapture.com>");
   const subject = "Your INFINIGHTCapture download";
+  const introText =
+    intro ||
+    (recovered
+      ? "Here is a fresh private download link for your INFINIGHTCapture license."
+      : "Thanks for buying INFINIGHTCapture. Your no-watermark build is ready here:");
   const html = `
         <div style="font-family:Inter,Arial,sans-serif;line-height:1.55;color:#101820">
           <h1 style="font-size:22px">Your INFINIGHTCapture download</h1>
-          <p>Thanks for buying INFINIGHTCapture. Your no-watermark build is ready here:</p>
+          <p>${introText}</p>
           <p><a href="${downloadUrl}">Download INFINIGHTCapture</a></p>
           <p>This private link can be regenerated any time from the recovery page.</p>
           <p>Need help? Reply to this email or contact ${supportEmail}.</p>
@@ -294,7 +488,7 @@ export async function sendDownloadEmail(env, { downloadUrl, to }) {
   const text = [
     "Your INFINIGHTCapture download",
     "",
-    "Thanks for buying INFINIGHTCapture. Your no-watermark build is ready here:",
+    introText,
     downloadUrl,
     "",
     "This private link can be regenerated any time from the recovery page.",
