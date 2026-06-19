@@ -204,13 +204,19 @@ const POSE_MODEL =
 const FACE_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task";
 
+const ENABLE_SHADER_WORKSPACE = false;
+
 const effects = [
-  { id: "gumstretch", label: "Gum Stretch", icon: Hand }
+  { id: "gumstretch", label: "Gum Stretch", icon: Hand },
+  { id: "warp", label: "Pinch Warp", icon: SlidersHorizontal },
+  { id: "orbit", label: "Orbit Field", icon: Sparkles },
+  { id: "contour", label: "Contour Bands", icon: ScanFace }
 ];
+const effectIds = new Set(effects.map((effect) => effect.id));
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Preview" },
-  { id: "shader", label: "Shader" },
+  ...(ENABLE_SHADER_WORKSPACE ? [{ id: "shader" as const, label: "Shader" }] : []),
   { id: "pads", label: "Pads" },
   { id: "mapping", label: "Mapping" },
   { id: "signal", label: "Signal" }
@@ -282,22 +288,22 @@ const outputCompositionModes: Array<{
 }> = [
   {
     id: "shader",
-    label: "Shader",
-    detail: "Shader only",
+    label: "FX Feed",
+    detail: "Camera effects only",
     showRig: false,
     includeCameraFeed: false
   },
   {
     id: "shaderWire",
-    label: "Shader + Wire",
-    detail: "Shader with mocap wireframe",
+    label: "Wire Overlay",
+    detail: "Effects with mocap wireframe",
     showRig: true,
     includeCameraFeed: false
   },
   {
     id: "shaderWireCamera",
     label: "Full Composite",
-    detail: "Shader, wireframe, and live feed",
+    detail: "Camera FX with wireframe",
     showRig: true,
     includeCameraFeed: true
   }
@@ -552,7 +558,7 @@ const gestureActionTriggers: Array<{ id: GestureActionTrigger; label: string }> 
 ];
 
 const gestureActionTypes: Array<{ id: GestureActionType; label: string }> = [
-  { id: "shaderParameter", label: "Shader Parameter" },
+  ...(ENABLE_SHADER_WORKSPACE ? [{ id: "shaderParameter" as const, label: "Shader Parameter" }] : []),
   { id: "effect", label: "Effect" },
   { id: "outputMode", label: "Output Mode" },
   { id: "keyboard", label: "Keyboard" },
@@ -590,8 +596,8 @@ const createGestureActionRoute = (
 
 const createDefaultGestureActionMatrix = (): GestureActionRoute[] => [
   {
-    ...createGestureActionRoute("smile-bloom", "smile", "started", "shaderParameter"),
-    shaderParameterId: "bloom",
+    ...createGestureActionRoute("smile-orbit", "smile", "started", "effect"),
+    effectId: "orbit",
     min: 0.72,
     max: 1
   },
@@ -601,7 +607,7 @@ const createDefaultGestureActionMatrix = (): GestureActionRoute[] => [
   },
   {
     ...createGestureActionRoute("eyes-closed-output", "eyesClosed", "started", "outputMode"),
-    outputMode: "shader"
+    outputMode: "shaderWire"
   }
 ];
 
@@ -744,7 +750,9 @@ const normalizeGestureActionRoute = (value: unknown, fallback: GestureActionRout
   const trigger = typeof value.trigger === "string" && gestureActionTriggerIds.has(value.trigger as GestureActionTrigger)
     ? value.trigger as GestureActionTrigger
     : fallback.trigger;
-  const actionType = typeof value.actionType === "string" && gestureActionTypeIds.has(value.actionType as GestureActionType)
+  const actionType = !ENABLE_SHADER_WORKSPACE && value.actionType === "shaderParameter"
+    ? "effect"
+    : typeof value.actionType === "string" && gestureActionTypeIds.has(value.actionType as GestureActionType)
     ? value.actionType as GestureActionType
     : fallback.actionType;
   const curve = typeof value.curve === "string" && gestureActionCurveIds.has(value.curve as GestureActionCurve)
@@ -761,7 +769,7 @@ const normalizeGestureActionRoute = (value: unknown, fallback: GestureActionRout
     trigger,
     actionType,
     shaderParameterId: typeof value.shaderParameterId === "string" ? value.shaderParameterId : fallback.shaderParameterId,
-    effectId: typeof value.effectId === "string" ? value.effectId : fallback.effectId,
+    effectId: typeof value.effectId === "string" && effectIds.has(value.effectId) ? value.effectId : fallback.effectId,
     outputMode,
     min: typeof value.min === "number" && Number.isFinite(value.min) ? clampNumber(value.min) : fallback.min,
     max: typeof value.max === "number" && Number.isFinite(value.max) ? clampNumber(value.max) : fallback.max,
@@ -777,7 +785,7 @@ const normalizeGestureActionMatrix = (value: unknown): GestureActionRoute[] => {
   return routes.map((route, index) =>
     normalizeGestureActionRoute(
       route,
-      defaults[index] ?? createGestureActionRoute(`route-${index + 1}`, gestureControlIds[index % gestureControlIds.length], "started", "shaderParameter")
+      defaults[index] ?? createGestureActionRoute(`route-${index + 1}`, gestureControlIds[index % gestureControlIds.length], "started", "effect")
     )
   );
 };
@@ -2150,7 +2158,7 @@ export function App() {
       selectedEffect,
       includeCameraFeed: selectedOutputComposition.includeCameraFeed,
       trackingMode: mode,
-      visualMode: "shader",
+      visualMode: ENABLE_SHADER_WORKSPACE ? "shader" : "camera",
       shaderScene: activeShaderScene,
       shaderParameters: shaderSettings,
       visualDrumPads: visualDrumPadOverlayRef.current,
@@ -2422,8 +2430,8 @@ export function App() {
     setGestureActionMatrix((current) => [
       ...current,
       {
-        ...createGestureActionRoute(`route-${Date.now().toString(36)}`, "smile", "started", "shaderParameter"),
-        shaderParameterId: activeShaderSceneRef.current.parameters[0]?.id ?? ""
+        ...createGestureActionRoute(`route-${Date.now().toString(36)}`, "smile", "started", "effect"),
+        effectId: "gumstretch"
       }
     ]);
     setGestureActionNotice("Route added.");
@@ -2598,8 +2606,10 @@ export function App() {
     if (tab === "preview") {
       setVisualMode("camera");
     }
-    if (tab === "shader" || tab === "pads" || tab === "mapping") {
+    if (ENABLE_SHADER_WORKSPACE && (tab === "shader" || tab === "pads" || tab === "mapping")) {
       setVisualMode("shader");
+    } else if (tab === "pads" || tab === "mapping") {
+      setVisualMode("camera");
     }
   }, []);
 
@@ -2911,7 +2921,7 @@ export function App() {
               />
             )}
 
-            {(activeWorkspace === "shader" || activeWorkspace === "pads" || activeWorkspace === "mapping") && (
+            {ENABLE_SHADER_WORKSPACE && (activeWorkspace === "shader" || activeWorkspace === "pads" || activeWorkspace === "mapping") && (
               <section className="shader-parameter-dock" aria-label="Shader parameters">
                 <div className="shader-parameter-dock-header">
                   <div>
@@ -3064,7 +3074,8 @@ export function App() {
           />
         </CollapsibleRailSection>
 
-        <CollapsibleRailSection
+        {ENABLE_SHADER_WORKSPACE && (
+          <CollapsibleRailSection
           collapsed={collapsedRailSections.shader}
           icon={SlidersHorizontal}
           id="shader"
@@ -3206,6 +3217,7 @@ export function App() {
             {shaderImportNotice && <div className="shader-import-notice">{shaderImportNotice}</div>}
           </div>
         </CollapsibleRailSection>
+        )}
 
         <CollapsibleRailSection
           collapsed={collapsedRailSections.effects}
