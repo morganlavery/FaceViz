@@ -203,13 +203,18 @@ const FACE_MODEL =
 const ENABLE_SHADER_WORKSPACE = false;
 
 const effects = [
-  { id: "gumstretch", label: "Finger + Nose Pull", icon: Hand },
+  { id: "fingerpull", label: "Finger Pull", icon: Hand },
+  { id: "nosepull", label: "Nose Pull", icon: ScanFace },
+  { id: "facestretch", label: "Stretch Face", icon: ScanFace },
+  { id: "facesquash", label: "Squash Face", icon: ScanFace },
   { id: "warp", label: "Pinch Warp", icon: SlidersHorizontal },
   { id: "orbit", label: "Orbit Field", icon: Sparkles },
   { id: "contour", label: "Contour Bands", icon: ScanFace }
 ];
 const effectIds = new Set(effects.map((effect) => effect.id));
-const bodyWarpEffects = effects.filter((effect) => ["gumstretch", "warp"].includes(effect.id));
+const bodyWarpEffects = effects.filter((effect) =>
+  ["fingerpull", "nosepull", "facestretch", "facesquash", "warp"].includes(effect.id)
+);
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Live View" },
@@ -595,7 +600,7 @@ const createGestureActionRoute = (
   trigger,
   actionType,
   shaderParameterId: "",
-  effectId: "gumstretch",
+  effectId: "fingerpull",
   outputMode: "shaderWire",
   min: 0,
   max: 1,
@@ -613,7 +618,7 @@ const createDefaultGestureActionMatrix = (): GestureActionRoute[] => [
   },
   {
     ...createGestureActionRoute("mouth-open-effect", "mouthOpen", "started", "effect"),
-    effectId: "gumstretch"
+    effectId: "facestretch"
   },
   {
     ...createGestureActionRoute("eyes-closed-output", "eyesClosed", "started", "outputMode"),
@@ -1174,12 +1179,12 @@ export function App() {
   const compositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
-    selectedEffect: "gumstretch"
+    selectedEffect: "fingerpull"
   });
   const outputCompositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
-    selectedEffect: "gumstretch",
+    selectedEffect: "fingerpull",
     watermark: {
       enabled: isDemoEdition,
       label: demoWatermarkLabel,
@@ -1218,7 +1223,7 @@ export function App() {
   const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
-  const [selectedEffect, setSelectedEffect] = useState("gumstretch");
+  const [selectedEffect, setSelectedEffect] = useState("fingerpull");
   const [outputTarget, setOutputTarget] = useState<OutputTarget>(getPreferredOutput);
   const [isOutputStreaming, setIsOutputStreaming] = useState(false);
   const [outputError, setOutputError] = useState("");
@@ -2696,7 +2701,7 @@ export function App() {
       ...current,
       {
         ...createGestureActionRoute(`route-${Date.now().toString(36)}`, "smile", "started", "effect"),
-        effectId: "gumstretch"
+        effectId: "fingerpull"
       }
     ]);
     setGestureActionNotice("Route added.");
@@ -3106,7 +3111,7 @@ export function App() {
             <div className="mapping-header">
               <div>
                 <p className="eyebrow">Body Warp</p>
-                <h2>{bodyWarpEffects.find((effect) => effect.id === selectedEffect)?.label ?? "Finger + Nose Pull"}</h2>
+                <h2>{bodyWarpEffects.find((effect) => effect.id === selectedEffect)?.label ?? "Body Warp"}</h2>
               </div>
               <div className="mapping-summary">
                 <span>Amount</span>
@@ -4861,6 +4866,8 @@ function ViewerMotionHud({ motion, scene, settings, shaderValues, visualMode }: 
     return {
       id: parameter.id,
       label: parameter.label,
+      max: parameter.max,
+      min: parameter.min,
       sourceLabel: source?.label ?? "Manual",
       signalValue,
       value: shaderValues[index] ?? parameter.defaultValue
@@ -4872,24 +4879,81 @@ function ViewerMotionHud({ motion, scene, settings, shaderValues, visualMode }: 
       <div className="viewer-signal-row">
         {signalRows.map((source) => {
           const value = getMotionSignalValue(source.id, motion);
+          const active = isSignalActive(source.id, value);
           return (
-            <div className={isSignalActive(source.id, value) ? "viewer-signal active" : "viewer-signal"} key={source.id}>
-              <span>{source.label}</span>
-              <strong>{isSignalActive(source.id, value) ? "active" : value.toFixed(2)}</strong>
-              <i style={{ transform: `scaleX(${Math.max(0.02, value)})` }} />
-            </div>
+            <GaugeReadout
+              active={active}
+              displayValue={active ? "Active" : value.toFixed(2)}
+              key={source.id}
+              label={source.label}
+              value={value}
+            />
           );
         })}
       </div>
       <div className="viewer-param-row">
         {parameterRows.map((parameter) => (
-          <div className={parameter.signalValue > 0.5 ? "viewer-param active" : "viewer-param"} key={parameter.id}>
-            <span>{parameter.label}</span>
-            <strong>{parameter.value.toFixed(2)}</strong>
-            <small>{parameter.sourceLabel}</small>
-          </div>
+          <GaugeReadout
+            active={parameter.signalValue > 0.5}
+            displayValue={parameter.value.toFixed(2)}
+            key={parameter.id}
+            label={parameter.label}
+            max={parameter.max}
+            min={parameter.min}
+            sublabel={parameter.sourceLabel}
+            value={parameter.value}
+          />
         ))}
       </div>
+    </div>
+  );
+}
+
+type GaugeReadoutProps = {
+  active?: boolean;
+  displayValue: string;
+  label: string;
+  max?: number;
+  min?: number;
+  sublabel?: string;
+  value: number;
+};
+
+function GaugeReadout({
+  active = false,
+  displayValue,
+  label,
+  max = 1,
+  min = 0,
+  sublabel,
+  value
+}: GaugeReadoutProps) {
+  const range = max - min || 1;
+  const normalizedValue = clampNumber((value - min) / range);
+
+  return (
+    <div className={active ? "gauge-readout active" : "gauge-readout"}>
+      <span>{label}</span>
+      <svg className="gauge-readout-dial" viewBox="0 0 120 64" role="presentation" aria-hidden="true">
+        <path className="gauge-readout-track" d="M16 54 A44 44 0 0 1 104 54" pathLength="100" />
+        <path
+          className="gauge-readout-value"
+          d="M16 54 A44 44 0 0 1 104 54"
+          pathLength="100"
+          style={{ strokeDasharray: `${Math.max(1, normalizedValue * 100)} 100` }}
+        />
+        <line
+          className="gauge-readout-needle"
+          x1="60"
+          y1="54"
+          x2="60"
+          y2="18"
+          style={{ transform: `rotate(${-86 + normalizedValue * 172}deg)` }}
+        />
+        <circle className="gauge-readout-pin" cx="60" cy="54" r="4.6" />
+      </svg>
+      <strong>{displayValue}</strong>
+      {sublabel && <small>{sublabel}</small>}
     </div>
   );
 }

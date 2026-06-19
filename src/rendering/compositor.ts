@@ -79,11 +79,11 @@ const GUM_FINGER_ROOTS: Record<(typeof GUM_FINGER_TIPS)[number], number> = {
   16: 13,
   20: 17
 };
-const GUM_PINCH_ENGAGE = 0.64;
-const GUM_PINCH_RELEASE = 0.38;
-const GUM_ATTACH_RADIUS = 0.085;
-const GUM_CHEEK_ATTACH_RADIUS = 0.13;
-const GUM_FACE_ATTACH_RADIUS = 0.105;
+const GUM_PINCH_ENGAGE = 0.52;
+const GUM_PINCH_RELEASE = 0.28;
+const GUM_ATTACH_RADIUS = 0.12;
+const GUM_CHEEK_ATTACH_RADIUS = 0.18;
+const GUM_FACE_ATTACH_RADIUS = 0.16;
 const GUM_SNAP_DURATION = 340;
 
 export type TrackingPreviewMode = "none" | "upper" | "full" | "face" | "handsFace";
@@ -139,6 +139,8 @@ type GumStretchTarget = {
   label: "hand" | "face";
   strength: number;
 };
+
+type GumStretchMode = "any" | "hand" | "face";
 
 type GumStretchRuntime = {
   phase: "idle" | "stretching" | "snapping";
@@ -620,61 +622,68 @@ const getPinchPoint = (hand: MotionFrame["hands"][number]): Vec2 | undefined => 
   return thumb && index ? midpoint(thumb, index) : undefined;
 };
 
-const getBestGumStretchTarget = (motion: MotionFrame): GumStretchTarget | null => {
+const getBestGumStretchTarget = (motion: MotionFrame, mode: GumStretchMode = "any"): GumStretchTarget | null => {
   const pinchingHands = motion.hands
     .map((hand, index) => ({ hand, index, pinchPoint: getPinchPoint(hand) }))
     .filter((entry) => entry.pinchPoint && entry.hand.pinch > GUM_PINCH_ENGAGE)
     .sort((a, b) => b.hand.pinch - a.hand.pinch);
 
-  for (const grabber of pinchingHands) {
-    let best:
-      | {
-          distance: number;
-          anchor: Vec2;
-          tip: Vec2;
-        }
-      | undefined;
+  if (mode !== "face") {
+    for (const grabber of pinchingHands) {
+      let best:
+        | {
+            distance: number;
+            anchor: Vec2;
+            tip: Vec2;
+          }
+        | undefined;
 
-    motion.hands.forEach((bodyHand, bodyIndex) => {
-      GUM_FINGER_TIPS.forEach((tipIndex) => {
-        if (bodyIndex === grabber.index && tipIndex === 8) return;
-        const grabbedTip = bodyHand.landmarks[tipIndex];
-        const anchor = bodyHand.landmarks[GUM_FINGER_ROOTS[tipIndex]];
-        if (!grabbedTip || !anchor || !grabber.pinchPoint) return;
-        const grabDistance = distance(grabbedTip, grabber.pinchPoint);
-        const attachRadius = bodyIndex === grabber.index ? GUM_ATTACH_RADIUS * 0.68 : GUM_ATTACH_RADIUS;
-        if (grabDistance < attachRadius && (!best || grabDistance < best.distance)) {
-          best = {
-            distance: grabDistance,
-            anchor,
-            tip: grabber.pinchPoint
-          };
-        }
+      motion.hands.forEach((bodyHand, bodyIndex) => {
+        GUM_FINGER_TIPS.forEach((tipIndex) => {
+          if (bodyIndex === grabber.index && tipIndex === 8) return;
+          const grabbedTip = bodyHand.landmarks[tipIndex];
+          const anchor = bodyHand.landmarks[GUM_FINGER_ROOTS[tipIndex]];
+          if (!grabbedTip || !anchor || !grabber.pinchPoint) return;
+          const grabDistance = distance(grabbedTip, grabber.pinchPoint);
+          const attachRadius = bodyIndex === grabber.index ? GUM_ATTACH_RADIUS * 0.82 : GUM_ATTACH_RADIUS;
+          if (grabDistance < attachRadius && (!best || grabDistance < best.distance)) {
+            best = {
+              distance: grabDistance,
+              anchor,
+              tip: grabber.pinchPoint
+            };
+          }
+        });
       });
-    });
 
-    if (best) {
-      return {
-        anchor: best.anchor,
-        tip: best.tip,
-        label: "hand",
-        strength: grabber.hand.pinch
-      };
+      if (best) {
+        return {
+          anchor: best.anchor,
+          tip: best.tip,
+          label: "hand",
+          strength: grabber.hand.pinch
+        };
+      }
     }
   }
 
-  if (!motion.face) {
+  if (mode === "hand") {
     return null;
   }
 
-  const faceAnchors = [
-    { anchor: motion.face.nose, radius: GUM_FACE_ATTACH_RADIUS },
-    { anchor: motion.face.chin, radius: GUM_FACE_ATTACH_RADIUS },
-    { anchor: motion.face.leftCheek, radius: GUM_CHEEK_ATTACH_RADIUS },
-    { anchor: motion.face.rightCheek, radius: GUM_CHEEK_ATTACH_RADIUS },
-    { anchor: motion.face.leftEar, radius: GUM_CHEEK_ATTACH_RADIUS },
-    { anchor: motion.face.rightEar, radius: GUM_CHEEK_ATTACH_RADIUS }
-  ].filter((entry): entry is { anchor: Vec2; radius: number } => Boolean(entry.anchor));
+  const faceAnchors = motion.face
+    ? [
+        { anchor: motion.face.nose, radius: GUM_FACE_ATTACH_RADIUS },
+        { anchor: motion.face.chin, radius: GUM_FACE_ATTACH_RADIUS },
+        { anchor: motion.face.leftCheek, radius: GUM_CHEEK_ATTACH_RADIUS },
+        { anchor: motion.face.rightCheek, radius: GUM_CHEEK_ATTACH_RADIUS },
+        { anchor: motion.face.leftEar, radius: GUM_CHEEK_ATTACH_RADIUS },
+        { anchor: motion.face.rightEar, radius: GUM_CHEEK_ATTACH_RADIUS }
+      ].filter((entry): entry is { anchor: Vec2; radius: number } => Boolean(entry.anchor))
+    : motion.pose?.nose
+      ? [{ anchor: motion.pose.nose, radius: GUM_FACE_ATTACH_RADIUS }]
+      : [];
+
   for (const grabber of pinchingHands) {
     if (!grabber.pinchPoint) continue;
     const faceTarget = faceAnchors
@@ -802,9 +811,16 @@ const drawGumTube = (
   ctx.restore();
 };
 
-const drawGumStretch = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+const drawGumStretch = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number,
+  mode: GumStretchMode = "any"
+) => {
   const now = motion.timestamp;
-  const target = getBestGumStretchTarget(motion);
+  const target = getBestGumStretchTarget(motion, mode);
   const runtime = gumStretchRuntimes.get(ctx.canvas) ?? {
     phase: "idle",
     anchor: { x: 0.5, y: 0.5 },
@@ -1006,6 +1022,45 @@ const withCharacterFrame = (
   ctx.rotate(frame.angle);
   draw(frame.width, frame.height);
   ctx.restore();
+};
+
+const drawFaceScaleWarp = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number,
+  mode: "stretch" | "squash"
+) => {
+  const frame = getCharacterFrame(motion, width, height);
+  if (!frame) return;
+
+  const strength = clamp(amount, 0.18, 1.35);
+  const sourceWidth = Math.min(width, frame.width * 1.2);
+  const sourceHeight = Math.min(height, frame.height * 1.16);
+  const sourceX = clamp(frame.center.x - sourceWidth / 2, 0, Math.max(0, width - sourceWidth));
+  const sourceY = clamp(frame.center.y - sourceHeight / 2, 0, Math.max(0, height - sourceHeight));
+  const scaleX = mode === "stretch" ? 1 - 0.14 * strength : 1 + 0.3 * strength;
+  const scaleY = mode === "stretch" ? 1 + 0.34 * strength : Math.max(0.48, 1 - 0.26 * strength);
+  const targetWidth = sourceWidth * scaleX;
+  const targetHeight = sourceHeight * scaleY;
+  const pulse = 0.04 * Math.sin(motion.timestamp / 180);
+
+  withCharacterFrame(ctx, frame, () => {
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(0, 0, (targetWidth / 2) * (1 + pulse), (targetHeight / 2) * (1 - pulse * 0.5), 0, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(ctx.canvas, sourceX, sourceY, sourceWidth, sourceHeight, -targetWidth / 2, -targetHeight / 2, targetWidth, targetHeight);
+
+    ctx.globalCompositeOperation = "screen";
+    ctx.strokeStyle = mode === "stretch" ? "rgba(118, 255, 235, 0.42)" : "rgba(255, 218, 112, 0.46)";
+    ctx.lineWidth = Math.max(2, 3.4 * strength);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, targetWidth / 2, targetHeight / 2, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  });
 };
 
 const drawCharacterHalo = (
@@ -1837,6 +1892,139 @@ const drawRig = (
   });
 };
 
+const drawGuideLabel = (ctx: CanvasRenderingContext2D, point: Vec2, label: string, color: string) => {
+  ctx.save();
+  ctx.font = `${Math.max(10, Math.floor(ctx.canvas.width / 92))}px Inter, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const labelWidth = Math.max(76, ctx.measureText(label).width + 18);
+  const labelHeight = 23;
+  const x = clamp(point.x - labelWidth / 2, 8, Math.max(8, ctx.canvas.width - labelWidth - 8));
+  const y = clamp(point.y - labelHeight / 2, 8, Math.max(8, ctx.canvas.height - labelHeight - 8));
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(4, 13, 17, 0.82)";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.2;
+  drawRoundedRect(ctx, x, y, labelWidth, labelHeight, 7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#e8fdff";
+  ctx.fillText(label, x + labelWidth / 2, y + labelHeight / 2);
+  ctx.restore();
+};
+
+const drawGuideArrow = (ctx: CanvasRenderingContext2D, start: Vec2, end: Vec2, color: string) => {
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const head = 12;
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.beginPath();
+  ctx.moveTo(start.x, start.y);
+  ctx.lineTo(end.x, end.y);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(end.x, end.y);
+  ctx.lineTo(end.x - Math.cos(angle - 0.48) * head, end.y - Math.sin(angle - 0.48) * head);
+  ctx.lineTo(end.x - Math.cos(angle + 0.48) * head, end.y - Math.sin(angle + 0.48) * head);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+};
+
+const drawFingerPullGuide = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const color = "rgba(255, 226, 104, 0.92)";
+  motion.hands.forEach((hand) => {
+    const pinchPoint = getPinchPoint(hand);
+    if (!pinchPoint) return;
+    const pinch = pointToCanvas(pinchPoint, width, height);
+    drawHandGestureFlash(ctx, pinch, "Pinch", color, Math.max(34, 42 * amount), motion.timestamp / 120);
+
+    const targetTip = hand.landmarks[12] ?? hand.landmarks[16] ?? hand.landmarks[20] ?? hand.landmarks[8];
+    const targetRoot = hand.landmarks[9] ?? hand.landmarks[13] ?? hand.landmarks[17] ?? hand.landmarks[5];
+    if (!targetTip || !targetRoot) return;
+    const tip = pointToCanvas(targetTip, width, height);
+    const root = pointToCanvas(targetRoot, width, height);
+    const direction = {
+      x: tip.x - root.x,
+      y: tip.y - root.y
+    };
+    const length = Math.max(0.001, Math.hypot(direction.x, direction.y));
+    const arrowEnd = {
+      x: tip.x + (direction.x / length) * Math.max(36, 54 * amount),
+      y: tip.y + (direction.y / length) * Math.max(36, 54 * amount)
+    };
+    drawPoint(ctx, tip, Math.max(7, 8 * amount), color);
+    drawGuideArrow(ctx, tip, arrowEnd, color);
+    drawGuideLabel(ctx, { x: tip.x, y: tip.y - 34 }, "Pull fingertip", color);
+  });
+};
+
+const drawNosePullGuide = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const nose = motion.face?.nose ?? motion.pose?.nose;
+  if (!nose) return;
+
+  const color = "rgba(101, 248, 255, 0.94)";
+  const nosePoint = pointToCanvas(nose, width, height);
+  const nearestHand = motion.hands
+    .map((hand) => ({ hand, distance: distance(hand.centroid, nose) }))
+    .sort((a, b) => a.distance - b.distance)[0]?.hand;
+  const pinchPoint = nearestHand ? getPinchPoint(nearestHand) : undefined;
+  const pullTarget = pinchPoint
+    ? pointToCanvas(pinchPoint, width, height)
+    : {
+        x: nosePoint.x + Math.max(58, 72 * amount),
+        y: nosePoint.y - Math.max(18, 24 * amount)
+      };
+  const dx = pullTarget.x - nosePoint.x;
+  const dy = pullTarget.y - nosePoint.y;
+  const length = Math.max(0.001, Math.hypot(dx, dy));
+  const arrowEnd = {
+    x: nosePoint.x + (dx / length) * Math.max(58, 82 * amount),
+    y: nosePoint.y + (dy / length) * Math.max(58, 82 * amount)
+  };
+
+  ctx.save();
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 14;
+  ctx.beginPath();
+  ctx.arc(nosePoint.x, nosePoint.y, Math.max(18, 24 * amount), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(nosePoint.x, nosePoint.y, Math.max(30, 42 * amount), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+
+  drawPoint(ctx, nosePoint, Math.max(7, 9 * amount), color);
+  drawGuideArrow(ctx, nosePoint, arrowEnd, color);
+  drawGuideLabel(ctx, { x: nosePoint.x, y: nosePoint.y - 48 }, "Pinch nose", color);
+  drawGuideLabel(ctx, { x: arrowEnd.x, y: arrowEnd.y + 26 }, "Pull out", color);
+};
+
+const drawEffectGuideMarkers = (
+  ctx: CanvasRenderingContext2D,
+  motion: MotionFrame,
+  width: number,
+  height: number,
+  amount: number,
+  selectedEffect: string
+) => {
+  if (selectedEffect === "fingerpull") {
+    drawFingerPullGuide(ctx, motion, width, height, amount);
+  } else if (selectedEffect === "nosepull") {
+    drawNosePullGuide(ctx, motion, width, height, amount);
+  }
+};
+
 const handIsRaised = (motion: MotionFrame, hand: MotionFrame["hands"][number]) => {
   const shoulderLineY =
     motion.pose?.leftShoulder && motion.pose.rightShoulder
@@ -2299,6 +2487,7 @@ export const renderFrame = (
         drawHandGestureMarkers(ctx, motion, width, height, baseAmount);
       }
       drawRig(ctx, motion, width, height, trackingMode);
+      drawEffectGuideMarkers(ctx, motion, width, height, baseAmount, options.selectedEffect);
     }
     drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
     if (options.watermark?.enabled) {
@@ -2358,8 +2547,20 @@ export const renderFrame = (
   if ((shouldRunGestureEffects && motion.gestures.pinch) || options.selectedEffect === "warp") {
     drawPinchWarp(ctx, motion, width, height, gestureAmount);
   }
+  if (options.selectedEffect === "fingerpull") {
+    drawGumStretch(ctx, motion, width, height, gestureAmount, "hand");
+  }
+  if (options.selectedEffect === "nosepull") {
+    drawGumStretch(ctx, motion, width, height, gestureAmount, "face");
+  }
   if (options.selectedEffect === "gumstretch") {
-    drawGumStretch(ctx, motion, width, height, gestureAmount);
+    drawGumStretch(ctx, motion, width, height, gestureAmount, "any");
+  }
+  if (options.selectedEffect === "facestretch") {
+    drawFaceScaleWarp(ctx, motion, width, height, gestureAmount, "stretch");
+  }
+  if (options.selectedEffect === "facesquash") {
+    drawFaceScaleWarp(ctx, motion, width, height, gestureAmount, "squash");
   }
   if ((shouldRunGestureEffects && motion.gestures.openPalm) || options.selectedEffect === "bloom") {
     drawPalmBloom(ctx, motion, width, height, gestureAmount);
@@ -2376,6 +2577,7 @@ export const renderFrame = (
       drawHandGestureMarkers(ctx, motion, width, height, gestureAmount);
     }
     drawRig(ctx, motion, width, height, trackingMode);
+    drawEffectGuideMarkers(ctx, motion, width, height, gestureAmount, options.selectedEffect);
   }
   drawVisualDrumPads(ctx, options.visualDrumPads, width, height);
   if (options.watermark?.enabled) {
