@@ -1,0 +1,104 @@
+name: Installer packages
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package-mac:
+    name: Build macOS DMG
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Package macOS demo DMG
+        run: npm run package:mac:demo
+
+      - name: Upload macOS demo DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: INFINIGHTCapture-demo-mac-arm64-dmg
+          path: release/INFINIGHTCapture-Demo-*-mac-arm64.dmg
+          if-no-files-found: error
+
+      - name: Attach macOS demo DMG to version release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/INFINIGHTCapture-Demo-*-mac-arm64.dmg
+
+  package-win:
+    name: Build Windows installer
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install Spout runtime DLL
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zipUrl = "https://github.com/leadedge/Spout2/releases/download/2.007.017/Spout-SDK-binaries_2-007-017_1.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP "spout-sdk-binaries.zip"
+          $extractPath = Join-Path $env:RUNNER_TEMP "spout-sdk-binaries"
+          Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+          Expand-Archive -Force -Path $zipPath -DestinationPath $extractPath
+
+          $dll = Get-ChildItem -Path $extractPath -Recurse -Filter "SpoutLibrary.dll" |
+            Where-Object { $_.FullName -match "(x64|Binaries)" } |
+            Select-Object -First 1
+          if (-not $dll) {
+            throw "SpoutLibrary.dll was not found after extracting the Spout SDK binaries."
+          }
+
+          "SPOUT_LIBRARY_DLL=$($dll.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Package Windows demo app
+        run: npm run package:win:demo
+
+      - name: Upload Windows demo installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: INFINIGHTCapture-demo-windows-x64-installer
+          path: release/INFINIGHTCapture-Demo-Setup-*-win-x64.exe
+          if-no-files-found: error
+
+      - name: Attach Windows demo installer to version release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/INFINIGHTCapture-Demo-Setup-*-win-x64.exe

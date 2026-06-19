@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#02080f" />
+    <title>Recover Download - INFINIGHTCapture</title>
+    <link rel="icon" type="image/png" href="../assets/brand/infinightcapture_icon.png" />
+    <link rel="stylesheet" href="../styles.css?v=brand-mobile-20260614" />
+  </head>
+  <body>
+    <header class="site-header" aria-label="Primary navigation">
+      <a class="brand-mark" href="../" aria-label="INFINIGHTCapture home">
+        <img
+          src="../assets/brand/infinightcapture_horizontal_logo.png"
+          srcset="../assets/brand/infinightcapture_horizontal_logo.png 1x, ../assets/brand/infinightcapture_horizontal_logo_2x.png 2x"
+          width="224"
+          height="69"
+          alt="INFINIGHTCapture"
+        />
+      </a>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="../#features">Features</a>
+        <a href="../#output">Output</a>
+        <a href="../#pricing">Pricing</a>
+      </nav>
+    </header>
+
+    <main class="checkout-result">
+      <section class="content-section download-section" aria-labelledby="recover-title">
+        <div class="section-heading">
+          <p class="eyebrow">Purchase recovery</p>
+          <h1 id="recover-title">Get a fresh download link.</h1>
+          <p>
+            Enter the email you used at checkout. If there is a paid license, a private download link will be sent there.
+          </p>
+        </div>
+
+        <form class="recovery-form" id="recovery-form">
+          <label class="form-field">
+            <span>Email used at checkout</span>
+            <input autocomplete="email" inputmode="email" name="email" placeholder="you@example.com" required type="email" />
+          </label>
+          <button class="button button-primary" type="submit">Send download link</button>
+          <p class="status-note" id="recovery-status" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>INFINIGHTCapture</span>
+      <a href="mailto:hello@infinightcapture.com">hello@infinightcapture.com</a>
+    </footer>
+
+    <script type="module">
+      const form = document.querySelector("#recovery-form");
+      const status = document.querySelector("#recovery-status");
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const submitButton = form.querySelector("button");
+        const formData = new FormData(form);
+        submitButton.disabled = true;
+        status.textContent = "Sending link...";
+
+        try {
+          const response = await fetch("/api/recover", {
+            body: JSON.stringify({ email: formData.get("email") }),
+            headers: { "Content-Type": "application/json" },
+            method: "POST"
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload.error || "Recovery is not available yet.");
+          }
+          status.textContent = payload.message || "If that email has a purchase, a fresh download link is on the way.";
+          form.reset();
+        } catch (error) {
+          status.textContent = error.message || "Recovery is not available yet.";
+        } finally {
+          submitButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

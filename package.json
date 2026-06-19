@@ -1,23 +1,39 @@
 {
-  "name": "faceviz",
+  "name": "infinightcapture",
   "version": "0.1.0",
   "private": true,
-  "description": "Gesture-reactive webcam mocap compositor with Syphon and Spout output targets.",
+  "description": "Gesture-reactive webcam mocap compositor with Syphon, Spout, and NDI output targets.",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "electron:dev": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
-    "electron:preview": "electron . --faceviz-load-dist",
+    "electron:preview": "electron . --infinightcapture-load-dist",
     "launch": "npm run build && npm run electron:preview",
-    "native:build": "native/build-syphon-helper.sh",
+    "native:build": "npm run native:build:mac",
+    "native:build:mac": "native/build-syphon-helper.sh",
+    "native:build:win": "powershell -ExecutionPolicy Bypass -File native/build-spout-helper.ps1",
+    "native:build:ndi": "node native/build-ndi-helper.cjs",
     "build": "tsc && vite build",
-    "package:mac": "npm run native:build && npm run build && electron-packager . FaceViz --platform=darwin --arch=arm64 --out=release --overwrite --prune=true --extend-info=electron/Info.plist --extra-resource=native/build/SyphonFramePublisher --ignore='^/(release|src|native)(/|$)'",
+    "build:demo": "node scripts/run-with-edition.mjs demo npm run build",
+    "build:paid": "node scripts/run-with-edition.mjs paid npm run build",
+    "package:mac": "npm run native:build:mac && npm run build && electron-builder --mac dmg --arm64",
+    "package:mac:demo": "npm run native:build:mac && npm run build:demo && electron-builder --mac dmg --arm64 && node scripts/rename-edition-artifacts.mjs demo mac",
+    "package:mac:paid": "npm run native:build:mac && npm run build:paid && electron-builder --mac dmg --arm64 && node scripts/rename-edition-artifacts.mjs paid mac",
+    "package:mac:ndi": "npm run native:build:mac && npm run native:build:ndi && npm run build && electron-packager . INFINIGHTCapture --platform=darwin --arch=arm64 --out=release --overwrite --prune=true --icon=build-resources/infinightcapture --extend-info=electron/Info.plist --extra-resource=native/build/SyphonFramePublisher --extra-resource=native/build/NDIFramePublisher --extra-resource=native/build/libndi.dylib --ignore='^/(release|src|native)(/|$)'",
+    "package:win": "npm run native:build:win && npm run build && electron-builder --win nsis --x64",
+    "package:win:demo": "npm run native:build:win && npm run build:demo && electron-builder --win nsis --x64 && node scripts/rename-edition-artifacts.mjs demo win",
+    "package:win:paid": "npm run native:build:win && npm run build:paid && electron-builder --win nsis --x64 && node scripts/rename-edition-artifacts.mjs paid win",
+    "package:win:ndi": "npm run native:build:win && npm run native:build:ndi && npm run build && electron-packager . INFINIGHTCapture --platform=win32 --arch=x64 --out=release --overwrite --prune=true --extra-resource=native/build/SpoutFramePublisher.exe --extra-resource=native/build/SpoutLibrary.dll --extra-resource=native/build/NDIFramePublisher.exe --extra-resource=native/build/Processing.NDI.Lib.x64.dll --ignore=\"^/(release|src|native)(/|$)\"",
+    "package:linux:ndi": "npm run native:build:ndi && npm run build && electron-packager . INFINIGHTCapture --platform=linux --arch=x64 --out=release --overwrite --prune=true --extra-resource=native/build/NDIFramePublisher --extra-resource=native/build/libndi.so --ignore='^/(release|src|native)(/|$)'",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.35",
+    "@types/qrcode": "^1.5.6",
+    "localtunnel": "^2.0.2",
     "lucide-react": "^0.468.0",
+    "qrcode": "^1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -28,8 +44,92 @@
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
     "electron": "^33.3.1",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.infinightcapture.app",
+    "productName": "INFINIGHTCapture",
+    "directories": {
+      "output": "release",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "publish": null,
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.video",
+      "icon": "build-resources/infinightcapture.icns",
+      "identity": null,
+      "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
+      "extendInfo": {
+        "NSCameraUsageDescription": "INFINIGHTCapture uses the camera to track hands, fingers, head, and shoulders for live visual effects."
+      },
+      "extraResources": [
+        {
+          "from": "native/build/SyphonFramePublisher",
+          "to": "SyphonFramePublisher"
+        }
+      ]
+    },
+    "dmg": {
+      "backgroundColor": "#02080f",
+      "iconSize": 96,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-Setup-${version}-win-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "native/build/SpoutFramePublisher.exe",
+          "to": "SpoutFramePublisher.exe"
+        },
+        {
+          "from": "native/build/SpoutLibrary.dll",
+          "to": "SpoutLibrary.dll"
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "INFINIGHTCapture"
+    }
   }
 }

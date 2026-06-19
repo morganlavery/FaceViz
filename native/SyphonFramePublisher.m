@@ -4,7 +4,7 @@
 #import "SyphonOpenGLServer.h"
 #import "SyphonPrivate.h"
 
-#define FACEVIZ_RAW_FRAME_MAGIC 0x46565A31U
+#define INFINIGHTCAPTURE_RAW_FRAME_MAGIC 0x46565A31U
 
 static BOOL readFully(NSFileHandle *input, void *buffer, NSUInteger length) {
     uint8_t *cursor = buffer;
@@ -66,7 +66,7 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
     return YES;
 }
 
-@interface FaceVizSyphonPublisher : NSObject
+@interface INFINIGHTCaptureSyphonPublisher : NSObject
 @property(nonatomic, strong) NSOpenGLContext *context;
 @property(nonatomic, strong) SyphonOpenGLServer *server;
 @property(nonatomic, strong) NSTimer *announceTimer;
@@ -83,7 +83,7 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
 - (void)publishRawFrame:(const uint8_t *)pixels width:(size_t)nextWidth height:(size_t)nextHeight;
 @end
 
-@implementation FaceVizSyphonPublisher
+@implementation INFINIGHTCaptureSyphonPublisher
 
 - (BOOL)start {
     NSOpenGLPixelFormatAttribute attributes[] = {
@@ -93,13 +93,13 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
     };
     NSOpenGLPixelFormat *pixelFormat = [[NSOpenGLPixelFormat alloc] initWithAttributes:attributes];
     if (!pixelFormat) {
-        fprintf(stderr, "FaceViz Syphon: failed to create OpenGL pixel format\n");
+        fprintf(stderr, "INFINIGHTCapture Syphon: failed to create OpenGL pixel format\n");
         return NO;
     }
 
     self.context = [[NSOpenGLContext alloc] initWithFormat:pixelFormat shareContext:nil];
     if (!self.context) {
-        fprintf(stderr, "FaceViz Syphon: failed to create OpenGL context\n");
+        fprintf(stderr, "INFINIGHTCapture Syphon: failed to create OpenGL context\n");
         return NO;
     }
 
@@ -111,14 +111,14 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    self.server = [[SyphonOpenGLServer alloc] initWithName:@"FaceViz Output" context:[self.context CGLContextObj] options:nil];
+    self.server = [[SyphonOpenGLServer alloc] initWithName:@"INFINIGHTCapture Output" context:[self.context CGLContextObj] options:nil];
     if (!self.server) {
-        fprintf(stderr, "FaceViz Syphon: failed to create Syphon server\n");
+        fprintf(stderr, "INFINIGHTCapture Syphon: failed to create Syphon server\n");
         return NO;
     }
 
-    fprintf(stderr, "FaceViz Syphon: publishing as \"FaceViz Output\"\n");
-    fprintf(stderr, "FaceViz Syphon: clients=0\n");
+    fprintf(stderr, "INFINIGHTCapture Syphon: publishing as \"INFINIGHTCapture Output\"\n");
+    fprintf(stderr, "INFINIGHTCapture Syphon: clients=0\n");
     self.lastFpsReportTime = CFAbsoluteTimeGetCurrent();
     [self announceServer];
     self.announceTimer = [NSTimer scheduledTimerWithTimeInterval:2.0
@@ -147,7 +147,7 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
     BOOL hasClients = self.server.hasClients;
     if (hasClients != self.lastReportedHasClients) {
         self.lastReportedHasClients = hasClients;
-        fprintf(stderr, "FaceViz Syphon: clients=%d\n", hasClients ? 1 : 0);
+        fprintf(stderr, "INFINIGHTCapture Syphon: clients=%d\n", hasClients ? 1 : 0);
     }
 }
 
@@ -156,7 +156,7 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
     size_t nextWidth = 0;
     size_t nextHeight = 0;
     if (!decodeFrame(encodedFrame, &rgba, &nextWidth, &nextHeight)) {
-        fprintf(stderr, "FaceViz Syphon: failed to decode frame\n");
+        fprintf(stderr, "INFINIGHTCapture Syphon: failed to decode frame\n");
         return;
     }
 
@@ -191,7 +191,7 @@ static BOOL decodeFrame(NSData *encoded, NSMutableData **rgbaOut, size_t *widthO
     CFTimeInterval now = CFAbsoluteTimeGetCurrent();
     if (now - self.lastFpsReportTime >= 2.0) {
         double fps = self.publishedFrames / (now - self.lastFpsReportTime);
-        fprintf(stderr, "FaceViz Syphon: output-fps=%.1f size=%zux%zu\n", fps, self.width, self.height);
+        fprintf(stderr, "INFINIGHTCapture Syphon: output-fps=%.1f size=%zux%zu\n", fps, self.width, self.height);
         self.publishedFrames = 0;
         self.lastFpsReportTime = now;
     }
@@ -212,7 +212,7 @@ int main(int argc, const char * argv[]) {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
 
-        FaceVizSyphonPublisher *publisher = [FaceVizSyphonPublisher new];
+        INFINIGHTCaptureSyphonPublisher *publisher = [INFINIGHTCaptureSyphonPublisher new];
         if (![publisher start]) {
             return 1;
         }
@@ -233,7 +233,7 @@ int main(int argc, const char * argv[]) {
                         ((uint32_t)lengthBytes[3]);
 
                     if (length == 0 || length > 25 * 1024 * 1024) {
-                        fprintf(stderr, "FaceViz Syphon: invalid frame length %u\n", length);
+                        fprintf(stderr, "INFINIGHTCapture Syphon: invalid frame length %u\n", length);
                         break;
                     }
 
@@ -250,7 +250,7 @@ int main(int argc, const char * argv[]) {
                                 ((uint32_t)bytes[1] << 16) |
                                 ((uint32_t)bytes[2] << 8) |
                                 ((uint32_t)bytes[3]);
-                            if (magic == FACEVIZ_RAW_FRAME_MAGIC) {
+                            if (magic == INFINIGHTCAPTURE_RAW_FRAME_MAGIC) {
                                 uint32_t width =
                                     ((uint32_t)bytes[4] << 24) |
                                     ((uint32_t)bytes[5] << 16) |
@@ -271,7 +271,7 @@ int main(int argc, const char * argv[]) {
                                 if (expectedLength == frame.length && expectedPixels == pixelLength) {
                                     [publisher publishRawFrame:bytes + 16 width:width height:height];
                                 } else {
-                                    fprintf(stderr, "FaceViz Syphon: invalid raw frame %ux%u bytes=%u packet=%lu\n", width, height, pixelLength, (unsigned long)frame.length);
+                                    fprintf(stderr, "INFINIGHTCapture Syphon: invalid raw frame %ux%u bytes=%u packet=%lu\n", width, height, pixelLength, (unsigned long)frame.length);
                                 }
                             } else {
                                 [publisher publishEncodedFrame:frame];
@@ -283,7 +283,7 @@ int main(int argc, const char * argv[]) {
                 }
             }
 
-            fprintf(stderr, "FaceViz Syphon: input closed\n");
+            fprintf(stderr, "INFINIGHTCapture Syphon: input closed\n");
             dispatch_async(dispatch_get_main_queue(), ^{
                 [NSApp terminate:nil];
             });
