@@ -10,6 +10,7 @@ import {
   ChevronsUpDown,
   Download,
   Expand,
+  EyeOff,
   FileUp,
   Fingerprint,
   Hand,
@@ -154,6 +155,7 @@ type VisualDrumPadRuntime = {
   lastHitAt: number;
   pressure: number;
   pressureVelocity: number;
+  xyUpdatedAt: number;
   zone: VisualDrumPadZoneId;
   zoneEnteredAt: number;
   xyX: number;
@@ -230,6 +232,7 @@ const workspaceTabIcons: Record<WorkspaceTab, typeof Activity> = {
 };
 
 const trackingPreviewModes: Array<{ id: TrackingPreviewMode; label: string; hudLabel: string; icon: typeof Activity }> = [
+  { id: "none", label: "None", hudLabel: "No Tracking Rig", icon: EyeOff },
   { id: "upper", label: "Upper Body", hudLabel: "Upper Body", icon: ScanFace },
   { id: "full", label: "Full Body", hudLabel: "Full Body", icon: Expand },
   { id: "face", label: "Face Gestures", hudLabel: "Face Gestures", icon: Smile },
@@ -372,6 +375,7 @@ const defaultWorkspaceLayout: WorkspaceLayout = {
 
 const VISUAL_DRUM_PAD_COUNT = 6;
 const VISUAL_DRUM_PAD_COOLDOWN_MS = 180;
+const VISUAL_DRUM_PAD_XY_DAMPING_SECONDS = 0.14;
 const VISUAL_DRUM_PAD_TIP_INDICES = [8, 12, 16, 20];
 const VISUAL_DRUM_PAD_XY_COUNT = 2;
 const visualDrumPadXyLabels = ["Left XY", "Right XY"];
@@ -482,16 +486,16 @@ const visualDrumPadLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width
 );
 const visualDrumPadXyLayout: Array<Pick<VisualDrumPadOverlayPad, "height" | "width" | "x" | "y">> = [
   {
-    x: 0.12,
-    y: 0.38,
-    width: 0.18,
-    height: 0.24
+    x: 0.08,
+    y: 0.33,
+    width: 0.24,
+    height: 0.34
   },
   {
-    x: 0.88 - 0.18,
-    y: 0.38,
-    width: 0.18,
-    height: 0.24
+    x: 0.92 - 0.24,
+    y: 0.33,
+    width: 0.24,
+    height: 0.34
   }
 ];
 const getPerformanceVisualDrumPadLayout = (performanceMode: PerformanceLayerMode, setId: VisualDrumPadSetId) =>
@@ -698,6 +702,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 const clampNumber = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+const dampNumber = (current: number, target: number, deltaSeconds: number, dampingSeconds: number) => {
+  const alpha = 1 - Math.exp(-Math.max(0, deltaSeconds) / Math.max(0.001, dampingSeconds));
+  return current + (target - current) * clampNumber(alpha);
+};
 const stripVisibleAppName = (value: string) => value.replace(/\bINFINIGHTCapture\s*/g, "").trim();
 
 const normalizeFaceGestureCalibration = (value: unknown): FaceGestureCalibration => {
@@ -848,6 +856,7 @@ const createVisualDrumPadRuntime = (): VisualDrumPadRuntime => ({
   lastHitAt: 0,
   pressure: 0,
   pressureVelocity: 0,
+  xyUpdatedAt: 0,
   zone: "center",
   zoneEnteredAt: 0,
   xyX: 0.5,
@@ -1783,8 +1792,18 @@ export function App() {
       nextInside.add(pad.id);
       const activePoint = insidePoints.reduce((best, candidate) => candidate.impact > best.impact ? candidate : best, insidePoints[0]);
       const impact = activePoint.impact;
-      const xyX = clampNumber((activePoint.displayPoint.x - layout.x) / layout.width);
-      const xyY = clampNumber((activePoint.displayPoint.y - layout.y) / layout.height);
+      const rawXyX = clampNumber((activePoint.displayPoint.x - layout.x) / layout.width);
+      const rawXyY = clampNumber((activePoint.displayPoint.y - layout.y) / layout.height);
+      const xyDeltaSeconds = previousRuntime.xyUpdatedAt > 0
+        ? Math.max(0.001, (nextMotion.timestamp - previousRuntime.xyUpdatedAt) / 1000)
+        : 1;
+      const shouldDampXy = padSet.xyEnabled && previousRuntime.active && previousRuntime.xyUpdatedAt > 0;
+      const xyX = shouldDampXy
+        ? clampNumber(dampNumber(previousRuntime.xyX, rawXyX, xyDeltaSeconds, VISUAL_DRUM_PAD_XY_DAMPING_SECONDS))
+        : rawXyX;
+      const xyY = shouldDampXy
+        ? clampNumber(dampNumber(previousRuntime.xyY, rawXyY, xyDeltaSeconds, VISUAL_DRUM_PAD_XY_DAMPING_SECONDS))
+        : rawXyY;
       const zone = padSet.zoneEnabled ? getVisualDrumPadZone(xyX, xyY) : "center";
       const xParameter = getVisualDrumPadXParameter(scene, pad, index);
       const yParameter = getVisualDrumPadYParameter(scene, pad, index);
@@ -1807,6 +1826,7 @@ export function App() {
         holdStartedAt,
         pressure,
         pressureVelocity: clampNumber(Math.abs(pressure - previousRuntime.pressure) * 1.9),
+        xyUpdatedAt: nextMotion.timestamp,
         zone,
         zoneEnteredAt: previousRuntime.zone === zone ? previousRuntime.zoneEnteredAt : nextMotion.timestamp,
         xyX,
@@ -2765,6 +2785,7 @@ export function App() {
       lastHitAt: strike ? timestamp : previousRuntime.lastHitAt,
       pressure: padSet.pressureEnabled ? Math.max(previousRuntime.pressure, strike ? 1 : 0.66) : previousRuntime.pressure,
       pressureVelocity: padSet.pressureEnabled ? (strike ? 1 : 0.28) : previousRuntime.pressureVelocity,
+      xyUpdatedAt: timestamp,
       zone,
       zoneEnteredAt: previousRuntime.zone === zone ? previousRuntime.zoneEnteredAt : timestamp,
       xyX,

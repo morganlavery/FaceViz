@@ -86,7 +86,7 @@ const GUM_CHEEK_ATTACH_RADIUS = 0.13;
 const GUM_FACE_ATTACH_RADIUS = 0.105;
 const GUM_SNAP_DURATION = 340;
 
-export type TrackingPreviewMode = "upper" | "full" | "face" | "handsFace";
+export type TrackingPreviewMode = "none" | "upper" | "full" | "face" | "handsFace";
 
 export type VisualDrumPadOverlayPad = {
   id: string;
@@ -1790,6 +1790,8 @@ const drawRig = (
   height: number,
   trackingMode: TrackingPreviewMode = "upper"
 ) => {
+  if (trackingMode === "none") return;
+
   const includePose = trackingMode === "upper" || trackingMode === "full";
   const includeHands = trackingMode === "upper" || trackingMode === "full" || trackingMode === "handsFace";
   const includeFace = trackingMode === "face" || trackingMode === "handsFace";

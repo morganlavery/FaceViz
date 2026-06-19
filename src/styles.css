@@ -1855,7 +1855,7 @@ body.layout-resizing-stage * {
   --xy-control-x: 50%;
   --xy-control-y: 50%;
   position: relative;
-  min-height: 340px;
+  min-height: 420px;
   overflow: hidden;
   border: 1px solid rgba(var(--accent-rgb), 0.44);
   border-radius: 8px;
@@ -3877,7 +3877,7 @@ body.layout-resizing-stage * {
   }
 
   .xy-performance-pad {
-    min-height: 280px;
+    min-height: 320px;
   }
 
   .xy-readout-grid,
