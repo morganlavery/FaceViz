@@ -1,5 +1,12 @@
 import { getOutputStatuses, type OutputTarget } from "../output/outputTargets";
-import type { CameraAccessResult, INFINIGHTCaptureSystemBridge, NativeOutputBridgeContract, SystemStatus } from "./types";
+import type {
+  CameraAccessResult,
+  INFINIGHTCaptureSystemBridge,
+  MobileFeedSignal,
+  MobileFeedStatus,
+  NativeOutputBridgeContract,
+  SystemStatus
+} from "./types";
 
 declare global {
   interface Window {
@@ -125,6 +132,70 @@ export const publishSystemOutputFrame = async (
   }
 
   return window.infinightCaptureSystem.publishOutputFrame(target, frame);
+};
+
+const unavailableMobileFeedStatus = (): MobileFeedStatus => ({
+  available: false,
+  sessionId: "",
+  port: 0,
+  urls: [],
+  primaryUrl: "",
+  connected: false,
+  hasOffer: false,
+  hasAnswer: false,
+  senderCandidateCount: 0,
+  receiverCandidateCount: 0,
+  updatedAt: Date.now()
+});
+
+export const getMobileFeedStatus = async (): Promise<MobileFeedStatus> => {
+  if (!window.infinightCaptureSystem) {
+    return unavailableMobileFeedStatus();
+  }
+
+  return window.infinightCaptureSystem.getMobileFeedStatus();
+};
+
+export const prepareMobileFeedOffer = async (offer: RTCSessionDescriptionInit): Promise<MobileFeedStatus> => {
+  if (!window.infinightCaptureSystem) {
+    return unavailableMobileFeedStatus();
+  }
+
+  return window.infinightCaptureSystem.prepareMobileFeedOffer(offer);
+};
+
+export const addMobileFeedReceiverCandidate = async (candidate: RTCIceCandidateInit) => {
+  if (!window.infinightCaptureSystem) {
+    return {
+      ok: false,
+      cursor: 0
+    };
+  }
+
+  return window.infinightCaptureSystem.addMobileFeedReceiverCandidate(candidate);
+};
+
+export const pollMobileFeedSignal = async (senderCandidateCursor: number): Promise<MobileFeedSignal> => {
+  if (!window.infinightCaptureSystem) {
+    return {
+      ok: false,
+      answer: null,
+      candidates: [],
+      cursor: senderCandidateCursor,
+      connected: false,
+      updatedAt: Date.now()
+    };
+  }
+
+  return window.infinightCaptureSystem.pollMobileFeedSignal(senderCandidateCursor);
+};
+
+export const resetMobileFeedSession = async (): Promise<MobileFeedStatus> => {
+  if (!window.infinightCaptureSystem) {
+    return unavailableMobileFeedStatus();
+  }
+
+  return window.infinightCaptureSystem.resetMobileFeedSession();
 };
 
 export const openExternalUrl = (url: string) => {

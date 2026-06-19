@@ -64,8 +64,8 @@ the card payment.
 
 The checkout button calls `/api/create-checkout`, redirects to Stripe Checkout, and returns to
 `/thanks/?session_id=...`. Paid download links call `/api/download/mac` or `/api/download/windows`
-with the Checkout Session ID, verify that Stripe reports the session as paid, and stream the installer
-from R2.
+with the Checkout Session ID, verify that Stripe reports the session as paid for the configured
+INFINIGHTCapture price/product, and stream the installer from R2.
 
 Stripe webhooks call `/api/stripe-webhook`, verify the Stripe signature, save the purchase in D1,
 generate a signed private download link, and email that link to the buyer. Email delivery uses Resend

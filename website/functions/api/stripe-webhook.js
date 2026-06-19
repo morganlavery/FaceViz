@@ -1,5 +1,6 @@
 import {
   createDownloadPageUrl,
+  isExpectedPaidCheckoutSession,
   json,
   savePaidCheckoutSession,
   sendDownloadEmail,
@@ -11,7 +12,7 @@ async function handleCheckoutSession(env, session) {
     throw new Error("Purchase storage is not configured.");
   }
 
-  if (session.mode !== "payment" || session.payment_status !== "paid") {
+  if (!isExpectedPaidCheckoutSession(env, session)) {
     return { emailed: false, saved: false };
   }
 

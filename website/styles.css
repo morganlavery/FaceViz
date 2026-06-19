@@ -187,16 +187,12 @@ p {
 }
 
 h1 {
-  max-width: 11ch;
+  max-width: 12ch;
   margin-bottom: 1.15rem;
   color: var(--brand-white);
-  font-size: clamp(2.9rem, 6.8vw, 6rem);
-  line-height: 0.92;
+  font-size: clamp(2.6rem, 5.8vw, 5.2rem);
+  line-height: 0.96;
   letter-spacing: 0;
-}
-
-h1 span {
-  display: block;
 }
 
 .hero-lede {
@@ -204,6 +200,44 @@ h1 span {
   color: #d7eef5;
   font-size: clamp(1.05rem, 2vw, 1.32rem);
   line-height: 1.55;
+}
+
+.hero-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+  margin: 1.25rem 0 1.35rem;
+}
+
+.hero-facts div {
+  min-width: 0;
+  padding: 0.72rem 0.78rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 8px;
+  background: rgba(3, 13, 18, 0.68);
+}
+
+.hero-facts dt {
+  margin-bottom: 0.28rem;
+  color: var(--accent-strong);
+  font-size: 0.64rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.hero-facts dd {
+  margin: 0;
+  color: var(--text);
+  font-size: 0.78rem;
+  font-weight: 780;
+  line-height: 1.3;
+}
+
+.checkout-note {
+  margin: 0.8rem 0 0;
+  color: var(--accent-soft);
+  font-size: 0.84rem;
+  line-height: 1.4;
 }
 
 .hero-actions,
@@ -353,13 +387,15 @@ h1 span {
 }
 
 .intro-band,
-.pricing-band {
+.pricing-band,
+.buyer-facts-band {
   padding: clamp(2.2rem, 6vw, 4.8rem) clamp(1rem, 4vw, 3rem);
   border-block: 1px solid rgba(var(--accent-rgb), 0.16);
   background: rgba(4, 15, 25, 0.94);
 }
 
 .summary-grid,
+.buyer-facts-grid,
 .feature-grid,
 .pricing-grid,
 .download-grid,
@@ -374,18 +410,35 @@ h1 span {
   gap: 1rem;
 }
 
-.summary-grid > div {
+.buyer-facts-band {
+  border-top: 0;
+  background:
+    linear-gradient(90deg, rgba(var(--accent-rgb), 0.1), transparent 38%),
+    rgba(2, 8, 15, 0.94);
+}
+
+.buyer-facts-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+
+.summary-grid > div,
+.buyer-facts-grid > div {
   min-width: 0;
   padding: 1.1rem 0;
 }
 
-.summary-grid strong {
+.summary-grid strong,
+.buyer-facts-grid strong {
   display: block;
   margin-bottom: 0.4rem;
   font-size: clamp(1.15rem, 2vw, 1.42rem);
+  line-height: 1.15;
 }
 
 .summary-grid p,
+.buyer-facts-grid p,
 .feature-card p,
 .price-card p,
 .section-heading p {
@@ -1564,6 +1617,28 @@ h1 span {
   flex: 1 1 auto;
 }
 
+.price-card .checkout-note,
+.paid-download-card .checkout-note {
+  flex: 0 0 auto;
+}
+
+.license-list {
+  display: grid;
+  gap: 0.42rem;
+  margin: 0 0 1.15rem;
+  padding: 0;
+  color: var(--accent-soft);
+  font-size: 0.92rem;
+  font-weight: 760;
+  list-style: none;
+}
+
+.license-list li::before {
+  content: "+";
+  margin-right: 0.48rem;
+  color: var(--warm);
+}
+
 .featured-price {
   border-color: rgba(var(--accent-rgb), 0.62);
   background: linear-gradient(135deg, rgba(0, 137, 177, 0.24), rgba(var(--brand-blue-rgb), 0.18));
@@ -1764,6 +1839,7 @@ h1 span {
 
   .hero-shell,
   .summary-grid,
+  .buyer-facts-grid,
   .feature-grid,
   .download-panel,
   .download-grid,
@@ -1833,8 +1909,11 @@ h1 span {
   }
 
   .hero-logo {
-    width: min(260px, 74vw);
-    margin-bottom: 1rem;
+    display: none;
+  }
+
+  .hero-facts {
+    grid-template-columns: 1fr;
   }
 
   .hero-actions,

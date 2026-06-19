@@ -1,4 +1,4 @@
-import { json, savePaidCheckoutSession, verifyDownloadToken } from "../../_shared/purchases.js";
+import { isExpectedPaidCheckoutSession, json, savePaidCheckoutSession, verifyDownloadToken } from "../../_shared/purchases.js";
 
 const DOWNLOADS = {
   mac: {
@@ -16,7 +16,10 @@ const DOWNLOADS = {
 };
 
 async function getCheckoutSession(env, sessionId) {
-  const response = await fetch(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`, {
+  const url = new URL(`https://api.stripe.com/v1/checkout/sessions/${sessionId}`);
+  url.searchParams.append("expand[]", "line_items");
+
+  const response = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`
     }
@@ -52,7 +55,7 @@ export async function onRequestGet({ env, params, request }) {
     authorized = true;
   } else if (sessionId) {
     const session = await getCheckoutSession(env, sessionId);
-    if (!session || session.payment_status !== "paid" || session.mode !== "payment") {
+    if (!session || !isExpectedPaidCheckoutSession(env, session)) {
       return json({ error: "Payment has not been completed." }, { status: 403 });
     }
     await savePaidCheckoutSession(env, session);

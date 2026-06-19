@@ -1,9 +1,7 @@
 import { FaceLandmarker, FilesetResolver, HandLandmarker, PoseLandmarker } from "@mediapipe/tasks-vision";
 import {
   Activity,
-  Aperture,
   BadgeCheck,
-  Bot,
   Camera,
   Code2,
   Cpu,
@@ -14,36 +12,26 @@ import {
   Expand,
   FileUp,
   Fingerprint,
-  Flame,
-  FlipHorizontal2,
   Hand,
-  Leaf,
   Link2,
   Loader2,
   Maximize2,
   MonitorCog,
-  MountainSnow,
-  Orbit,
   Pause,
   Play,
-  Rabbit,
   RadioTower,
+  RefreshCw,
   ScanFace,
-  ScanLine,
   Settings2,
   SlidersHorizontal,
   Smile,
-  Sprout,
   Trash2,
   ShieldAlert,
   Sparkles,
-  Star,
-  Swords,
-  Trees,
-  Waves
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import QRCode from "qrcode";
 import { demoWatermarkLabel, isDemoEdition } from "./licensing/edition";
 import { getOutputStatuses, getPreferredOutput, type OutputTarget } from "./output/outputTargets";
 import {
@@ -71,13 +59,18 @@ import {
 } from "./rendering/shaderPlayer";
 import {
   getSystemStatus,
+  addMobileFeedReceiverCandidate,
   openExternalUrl,
+  getMobileFeedStatus,
+  pollMobileFeedSignal,
+  prepareMobileFeedOffer,
   publishSystemOutputFrame,
   requestSystemCameraAccess,
+  resetMobileFeedSession,
   startSystemOutput,
   stopSystemOutput
 } from "./system/systemBridge";
-import type { SystemNativeOutputStatus, SystemStatus, SystemSyphonPeer } from "./system/types";
+import type { MobileFeedStatus, SystemNativeOutputStatus, SystemStatus, SystemSyphonPeer } from "./system/types";
 import {
   analyzeMotion,
   buildTrackedFace,
@@ -105,12 +98,13 @@ import type {
 
 type CaptureState = "idle" | "loading" | "running" | "error";
 type CameraIssue = "blocked" | "missing" | "browser" | null;
+type CameraSourceMode = "system" | "mobile";
 type CameraDeviceOption = {
   deviceId: string;
   groupId: string;
   label: string;
 };
-type WorkspaceTab = "preview" | "shader" | "pads" | "mapping" | "signal";
+type WorkspaceTab = "preview" | "shader" | "effects" | "pads" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
 type PerformanceLayerMode = "wireframe" | "pads" | "xy";
 type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
@@ -217,6 +211,7 @@ const effectIds = new Set(effects.map((effect) => effect.id));
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
   { id: "preview", label: "Preview" },
   ...(ENABLE_SHADER_WORKSPACE ? [{ id: "shader" as const, label: "Shader" }] : []),
+  { id: "effects", label: "Effects" },
   { id: "pads", label: "Pads" },
   { id: "mapping", label: "Mapping" },
   { id: "signal", label: "Signal" }
@@ -225,6 +220,7 @@ const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
 const workspaceTabIcons: Record<WorkspaceTab, typeof Activity> = {
   preview: ScanFace,
   shader: Sparkles,
+  effects: Camera,
   pads: Hand,
   mapping: SlidersHorizontal,
   signal: Activity
@@ -288,22 +284,22 @@ const outputCompositionModes: Array<{
 }> = [
   {
     id: "shader",
-    label: "FX Feed",
-    detail: "Camera effects only",
+    label: "Effects Only",
+    detail: "Processed effects feed",
     showRig: false,
     includeCameraFeed: false
   },
   {
     id: "shaderWire",
-    label: "Wire Overlay",
-    detail: "Effects with mocap wireframe",
+    label: "Effects + Wire",
+    detail: "Effects with tracking overlay",
     showRig: true,
     includeCameraFeed: false
   },
   {
     id: "shaderWireCamera",
-    label: "Full Composite",
-    detail: "Camera FX with wireframe",
+    label: "Camera + Effects + Wire",
+    detail: "Live camera, effects, and tracking",
     showRig: true,
     includeCameraFeed: true
   }
@@ -1132,6 +1128,9 @@ export function App() {
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const rafRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const mobilePeerRef = useRef<RTCPeerConnection | null>(null);
+  const mobileSignalTimerRef = useRef<number | null>(null);
+  const mobileSignalCursorRef = useRef(0);
   const previousHandsRef = useRef<Map<string, PreviousHandSample>>(new Map());
   const motionRef = useRef<MotionFrame | null>(null);
   const faceGestureCalibrationRef = useRef<FaceGestureCalibration>(defaultFaceGestureCalibration);
@@ -1178,7 +1177,11 @@ export function App() {
   const [captureState, setCaptureState] = useState<CaptureState>("idle");
   const [error, setError] = useState("");
   const [cameraIssue, setCameraIssue] = useState<CameraIssue>(null);
+  const [cameraSourceMode, setCameraSourceMode] = useState<CameraSourceMode>("system");
   const [cameraDevices, setCameraDevices] = useState<CameraDeviceOption[]>([]);
+  const [mobileFeedStatus, setMobileFeedStatus] = useState<MobileFeedStatus | null>(null);
+  const [mobileFeedNotice, setMobileFeedNotice] = useState("");
+  const [mobileFeedQrUrl, setMobileFeedQrUrl] = useState("");
   const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState(() => {
     try {
       return window.localStorage.getItem(CAMERA_DEVICE_STORAGE_KEY) ?? "";
@@ -1323,6 +1326,15 @@ export function App() {
     performanceLayerModes.find((performanceMode) => performanceMode.id === performanceLayerMode) ?? performanceLayerModes[0];
   const selectedCameraDevice = cameraDevices.find((device) => device.deviceId === selectedCameraDeviceId);
   const selectedCameraLabel = selectedCameraDevice?.label ?? (selectedCameraDeviceId ? "Selected camera" : "System default");
+  const selectedSourceLabel =
+    cameraSourceMode === "mobile"
+      ? mobileFeedStatus?.connected
+        ? "Mobile live feed"
+        : "Waiting for phone"
+      : selectedCameraLabel;
+  const mobileFeedUrl = mobileFeedStatus?.primaryUrl ?? "";
+  const mobileFeedIsSecure = mobileFeedUrl.startsWith("https://");
+  const mobileFeedPairingLabel = mobileFeedIsSecure ? "Secure scan code" : "Local scan code";
   const appShellStyle = {
     "--control-rail-width": `${workspaceLayout.railWidth}px`,
     "--stage-panel-height": `${workspaceLayout.stageHeight}px`
@@ -1374,12 +1386,80 @@ export function App() {
     }
   }, []);
 
+  const closeMobilePeer = useCallback(() => {
+    if (mobileSignalTimerRef.current !== null) {
+      window.clearInterval(mobileSignalTimerRef.current);
+      mobileSignalTimerRef.current = null;
+    }
+    mobileSignalCursorRef.current = 0;
+    if (mobilePeerRef.current) {
+      mobilePeerRef.current.onicecandidate = null;
+      mobilePeerRef.current.ontrack = null;
+      mobilePeerRef.current.onconnectionstatechange = null;
+      mobilePeerRef.current.close();
+      mobilePeerRef.current = null;
+    }
+  }, []);
+
+  const initializeLandmarkers = useCallback(async () => {
+    if (handLandmarkerRef.current && poseLandmarkerRef.current && faceLandmarkerRef.current) {
+      return;
+    }
+
+    const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
+    const [handLandmarker, poseLandmarker, faceLandmarker] = await Promise.all([
+      HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: HAND_MODEL,
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numHands: 2,
+        minHandDetectionConfidence: 0.45,
+        minHandPresenceConfidence: 0.45,
+        minTrackingConfidence: 0.45
+      }),
+      PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: POSE_MODEL,
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numPoses: 1,
+        minPoseDetectionConfidence: 0.4,
+        minPosePresenceConfidence: 0.4,
+        minTrackingConfidence: 0.4
+      }),
+      FaceLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: FACE_MODEL,
+          delegate: "GPU"
+        },
+        runningMode: "VIDEO",
+        numFaces: 1,
+        minFaceDetectionConfidence: 0.45,
+        minFacePresenceConfidence: 0.45,
+        minTrackingConfidence: 0.45
+      })
+    ]);
+    handLandmarkerRef.current = handLandmarker;
+    poseLandmarkerRef.current = poseLandmarker;
+    faceLandmarkerRef.current = faceLandmarker;
+  }, []);
+
+  const beginTracking = useCallback(() => {
+    runningRef.current = true;
+    lastVideoTimeRef.current = -1;
+    previousHandsRef.current.clear();
+    visualDrumPadInsideRef.current = new Set();
+    visualDrumPadStrikeSamplesRef.current = new Map();
+    gestureStateMachineRef.current = createGestureStateMachineMemory();
+    setCaptureState("running");
+  }, []);
+
   const stopCapture = useCallback(() => {
     runningRef.current = false;
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
+    closeMobilePeer();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
     if (videoRef.current) {
@@ -1390,7 +1470,8 @@ export function App() {
     visualDrumPadStrikeSamplesRef.current = new Map();
     setCameraIssue(null);
     setCaptureState("idle");
-  }, []);
+    setMobileFeedNotice("");
+  }, [closeMobilePeer]);
 
   const pumpOutputFrame = useCallback(async () => {
     if (!outputStreamingRef.current) {
@@ -1921,55 +2002,8 @@ export function App() {
       await video.play();
       refreshCameraDevices();
 
-      if (!handLandmarkerRef.current || !poseLandmarkerRef.current || !faceLandmarkerRef.current) {
-        const vision = await FilesetResolver.forVisionTasks(WASM_ROOT);
-        const [handLandmarker, poseLandmarker, faceLandmarker] = await Promise.all([
-          HandLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: HAND_MODEL,
-              delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numHands: 2,
-            minHandDetectionConfidence: 0.45,
-            minHandPresenceConfidence: 0.45,
-            minTrackingConfidence: 0.45
-          }),
-          PoseLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: POSE_MODEL,
-              delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numPoses: 1,
-            minPoseDetectionConfidence: 0.4,
-            minPosePresenceConfidence: 0.4,
-            minTrackingConfidence: 0.4
-          }),
-          FaceLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: FACE_MODEL,
-              delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numFaces: 1,
-            minFaceDetectionConfidence: 0.45,
-            minFacePresenceConfidence: 0.45,
-            minTrackingConfidence: 0.45
-          })
-        ]);
-        handLandmarkerRef.current = handLandmarker;
-        poseLandmarkerRef.current = poseLandmarker;
-        faceLandmarkerRef.current = faceLandmarker;
-      }
-
-      runningRef.current = true;
-      lastVideoTimeRef.current = -1;
-      previousHandsRef.current.clear();
-      visualDrumPadInsideRef.current = new Set();
-      visualDrumPadStrikeSamplesRef.current = new Map();
-      gestureStateMachineRef.current = createGestureStateMachineMemory();
-      setCaptureState("running");
+      await initializeLandmarkers();
+      beginTracking();
     } catch (nextError) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
@@ -1982,7 +2016,127 @@ export function App() {
       setCaptureState("error");
       runningRef.current = false;
     }
-  }, [captureState, refreshCameraDevices, selectedCameraDeviceId]);
+  }, [beginTracking, captureState, initializeLandmarkers, refreshCameraDevices, selectedCameraDeviceId]);
+
+  const startMobileCapture = useCallback(async (options: { force?: boolean } = {}) => {
+    if (!options.force && (captureState === "loading" || captureState === "running")) return;
+    setError("");
+    setCameraIssue(null);
+    setMobileFeedNotice("Preparing mobile receiver.");
+    setCaptureState("loading");
+
+    try {
+      const video = videoRef.current;
+      if (!video) {
+        throw new Error("Preview video is not ready.");
+      }
+
+      if (!window.RTCPeerConnection) {
+        throw new Error("This browser surface does not support WebRTC mobile feeds.");
+      }
+
+      closeMobilePeer();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      video.srcObject = null;
+
+      const status = await getMobileFeedStatus();
+      setMobileFeedStatus(status);
+      if (!status.available || !status.primaryUrl) {
+        throw new Error("Open the Electron app to host a mobile live feed.");
+      }
+
+      const peer = new RTCPeerConnection();
+      mobilePeerRef.current = peer;
+      mobileSignalCursorRef.current = 0;
+      peer.addTransceiver("video", { direction: "recvonly" });
+      peer.onicecandidate = (event) => {
+        if (event.candidate) {
+          void addMobileFeedReceiverCandidate(event.candidate.toJSON());
+        }
+      };
+      peer.onconnectionstatechange = () => {
+        if (peer.connectionState === "connected") {
+          setMobileFeedNotice("Phone linked.");
+          void getMobileFeedStatus().then(setMobileFeedStatus);
+        }
+        if (peer.connectionState === "failed" || peer.connectionState === "disconnected") {
+          setMobileFeedNotice("Phone feed disconnected.");
+        }
+      };
+      peer.ontrack = async (event) => {
+        try {
+          const [remoteStream] = event.streams;
+          const nextStream = remoteStream ?? new MediaStream([event.track]);
+          streamRef.current = nextStream;
+          video.srcObject = nextStream;
+          await video.play();
+          await initializeLandmarkers();
+          beginTracking();
+          setMobileFeedNotice("Phone feed is live.");
+        } catch (nextError) {
+          setError(nextError instanceof Error ? nextError.message : "Unable to play mobile feed.");
+          setCaptureState("error");
+          runningRef.current = false;
+        }
+      };
+
+      const offer = await peer.createOffer();
+      await peer.setLocalDescription(offer);
+      if (!peer.localDescription) {
+        throw new Error("Unable to create mobile feed offer.");
+      }
+
+      const nextStatus = await prepareMobileFeedOffer(peer.localDescription.toJSON());
+      setMobileFeedStatus(nextStatus);
+      setMobileFeedNotice("Open the mobile link, then press Start Camera on the phone.");
+
+      mobileSignalTimerRef.current = window.setInterval(async () => {
+        const activePeer = mobilePeerRef.current;
+        if (!activePeer) return;
+        try {
+          const signal = await pollMobileFeedSignal(mobileSignalCursorRef.current);
+          mobileSignalCursorRef.current = signal.cursor;
+          if (signal.answer && !activePeer.remoteDescription) {
+            await activePeer.setRemoteDescription(signal.answer);
+          }
+          for (const candidate of signal.candidates) {
+            await activePeer.addIceCandidate(candidate);
+          }
+          setMobileFeedStatus((current) =>
+            current
+              ? {
+                  ...current,
+                  connected: signal.connected,
+                  hasAnswer: Boolean(signal.answer) || current.hasAnswer,
+                  senderCandidateCount: signal.cursor,
+                  updatedAt: signal.updatedAt
+                }
+              : current
+          );
+        } catch (nextError) {
+          setMobileFeedNotice(nextError instanceof Error ? nextError.message : "Waiting for phone signal.");
+        }
+      }, 650);
+    } catch (nextError) {
+      closeMobilePeer();
+      const captureError = getCaptureError(nextError);
+      setCameraIssue(captureError.issue);
+      setError(captureError.message);
+      setCaptureState("error");
+      setMobileFeedNotice("");
+      runningRef.current = false;
+    }
+  }, [beginTracking, captureState, closeMobilePeer, initializeLandmarkers]);
+
+  const startSelectedCapture = useCallback(() => {
+    if (cameraSourceMode === "mobile") {
+      void startMobileCapture();
+      return;
+    }
+
+    void startCapture();
+  }, [cameraSourceMode, startCapture, startMobileCapture]);
 
   const selectCameraDevice = useCallback((deviceId: string) => {
     setSelectedCameraDeviceId(deviceId);
@@ -1993,6 +2147,34 @@ export function App() {
       }, 0);
     }
   }, [captureState, startCapture, stopCapture]);
+
+  const selectCameraSourceMode = useCallback((sourceMode: CameraSourceMode) => {
+    setCameraSourceMode(sourceMode);
+    setError("");
+    setCameraIssue(null);
+    setMobileFeedNotice("");
+    if (runningRef.current || captureState === "running" || captureState === "loading") {
+      stopCapture();
+      if (sourceMode === "mobile") {
+        window.setTimeout(() => {
+          void startMobileCapture({ force: true });
+        }, 0);
+      }
+    }
+    if (sourceMode === "mobile") {
+      void getMobileFeedStatus().then(setMobileFeedStatus);
+    }
+  }, [captureState, startMobileCapture, stopCapture]);
+
+  const resetMobilePairing = useCallback(async () => {
+    closeMobilePeer();
+    const status = await resetMobileFeedSession();
+    setMobileFeedStatus(status);
+    setMobileFeedNotice("Pairing link refreshed.");
+    if (captureState === "running" || captureState === "loading") {
+      stopCapture();
+    }
+  }, [captureState, closeMobilePeer, stopCapture]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2035,6 +2217,57 @@ export function App() {
       navigator.mediaDevices?.removeEventListener?.("devicechange", refreshCameraDevices);
     };
   }, [refreshCameraDevices]);
+
+  useEffect(() => {
+    if (cameraSourceMode !== "mobile") return;
+
+    let cancelled = false;
+    const updateMobileFeedStatus = async () => {
+      const status = await getMobileFeedStatus();
+      if (!cancelled) {
+        setMobileFeedStatus(status);
+      }
+    };
+
+    updateMobileFeedStatus();
+    const interval = window.setInterval(updateMobileFeedStatus, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [cameraSourceMode]);
+
+  useEffect(() => {
+    if (!mobileFeedUrl) {
+      setMobileFeedQrUrl("");
+      return;
+    }
+
+    let cancelled = false;
+    QRCode.toDataURL(mobileFeedUrl, {
+      color: {
+        dark: "#02080f",
+        light: "#f8fbff"
+      },
+      errorCorrectionLevel: "M",
+      margin: 1,
+      width: 196
+    })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setMobileFeedQrUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setMobileFeedQrUrl("");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mobileFeedUrl]);
 
   useEffect(() => {
     window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify(workspaceLayout));
@@ -2603,7 +2836,7 @@ export function App() {
 
   const selectWorkspace = useCallback((tab: WorkspaceTab) => {
     setActiveWorkspace(tab);
-    if (tab === "preview") {
+    if (tab === "preview" || tab === "effects") {
       setVisualMode("camera");
     }
     if (ENABLE_SHADER_WORKSPACE && (tab === "shader" || tab === "pads" || tab === "mapping")) {
@@ -2619,6 +2852,7 @@ export function App() {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
       }
+      closeMobilePeer();
       streamRef.current?.getTracks().forEach((track) => track.stop());
       handLandmarkerRef.current?.close();
       poseLandmarkerRef.current?.close();
@@ -2629,7 +2863,7 @@ export function App() {
       }
       stopSystemOutput(outputTargetRef.current);
     };
-  }, [renderLoop]);
+  }, [closeMobilePeer, renderLoop]);
 
   const activeGestures = motion
     ? Object.entries(motion.gestures)
@@ -2765,29 +2999,101 @@ export function App() {
                 </span>
                 <div className="source-select-shell">
                   <select
-                    value={selectedCameraDeviceId}
-                    onChange={(event) => selectCameraDevice(event.target.value)}
+                    value={cameraSourceMode}
+                    onChange={(event) => selectCameraSourceMode(event.target.value as CameraSourceMode)}
                     disabled={captureState === "loading"}
-                    aria-label="Camera source"
+                    aria-label="Live feed source"
                   >
-                    <option value="">System default</option>
-                    {selectedCameraDeviceId && !selectedCameraDevice && (
-                      <option value={selectedCameraDeviceId}>Selected camera</option>
-                    )}
-                    {cameraDevices.map((device, index) => (
-                      <option key={`${device.deviceId}-${device.groupId}-${index}`} value={device.deviceId}>
-                        {device.label}
-                      </option>
-                    ))}
+                    <option value="system">System Camera</option>
+                    <option value="mobile">Mobile Live Feed</option>
                   </select>
                   <ChevronDown size={16} />
                 </div>
               </label>
+              {cameraSourceMode === "system" ? (
+                <label className="camera-source-control">
+                  <span>
+                    <Camera size={15} />
+                    Camera
+                  </span>
+                  <div className="source-select-shell">
+                    <select
+                      value={selectedCameraDeviceId}
+                      onChange={(event) => selectCameraDevice(event.target.value)}
+                      disabled={captureState === "loading"}
+                      aria-label="Camera source"
+                    >
+                      <option value="">System default</option>
+                      {selectedCameraDeviceId && !selectedCameraDevice && (
+                        <option value={selectedCameraDeviceId}>Selected camera</option>
+                      )}
+                      {cameraDevices.map((device, index) => (
+                        <option key={`${device.deviceId}-${device.groupId}-${index}`} value={device.deviceId}>
+                          {device.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={16} />
+                  </div>
+                </label>
+              ) : (
+                <div className="mobile-feed-panel">
+                  <div className="mobile-feed-link">
+                    <span>{mobileFeedStatus?.connected ? "Connected" : mobileFeedPairingLabel}</span>
+                    <strong>{mobileFeedUrl || "Starting mobile feed host"}</strong>
+                  </div>
+                  <button
+                    className="mobile-feed-action"
+                    type="button"
+                    onClick={resetMobilePairing}
+                    disabled={captureState === "loading"}
+                    aria-label="Refresh mobile pairing link"
+                    title="Refresh mobile pairing link"
+                  >
+                    <RefreshCw size={16} />
+                  </button>
+                </div>
+              )}
               <div className="camera-source-status">
-                <span>{cameraDevices.length > 0 ? `${cameraDevices.length} source${cameraDevices.length === 1 ? "" : "s"}` : "Source scan"}</span>
-                <strong>{selectedCameraLabel}</strong>
+                <span>
+                  {cameraSourceMode === "mobile"
+                    ? mobileFeedStatus?.connected
+                      ? "Phone linked"
+                      : "Phone source"
+                    : cameraDevices.length > 0
+                      ? `${cameraDevices.length} source${cameraDevices.length === 1 ? "" : "s"}`
+                      : "Source scan"}
+                </span>
+                <strong>{selectedSourceLabel}</strong>
               </div>
             </section>
+
+            {cameraSourceMode === "mobile" && (
+              <section className="mobile-feed-qr-card" aria-label="Mobile Live Feed pairing code">
+                <div className="mobile-feed-qr-shell">
+                  {mobileFeedQrUrl ? (
+                    <img src={mobileFeedQrUrl} alt="Mobile Live Feed pairing QR code" />
+                  ) : (
+                    <Loader2 size={28} className="spin" />
+                  )}
+                </div>
+                <div className="mobile-feed-qr-copy">
+                  <span>{mobileFeedStatus?.connected ? "Phone connected" : mobileFeedPairingLabel}</span>
+                  <strong>{mobileFeedStatus?.connected ? "Mobile Live Feed" : "Open on phone"}</strong>
+                  <p>{mobileFeedUrl || mobileFeedStatus?.tunnelError || "Starting secure mobile pairing"}</p>
+                </div>
+                <button
+                  className="mobile-feed-qr-refresh"
+                  type="button"
+                  onClick={resetMobilePairing}
+                  disabled={captureState === "loading"}
+                  aria-label="Refresh mobile pairing QR code"
+                  title="Refresh mobile pairing QR code"
+                >
+                  <RefreshCw size={17} />
+                </button>
+              </section>
+            )}
 
             <section className="transport-row" aria-label="Capture controls">
               {trackingPreviewModes.map((previewMode) => {
@@ -2810,7 +3116,7 @@ export function App() {
                   Stop
                 </button>
               ) : (
-                <button className="start-button" onClick={() => startCapture()} disabled={captureState === "loading"}>
+                <button className="start-button" onClick={startSelectedCapture} disabled={captureState === "loading"}>
                   {captureState === "loading" ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
                   Start
                 </button>
@@ -2844,6 +3150,12 @@ export function App() {
                     <li>For the desktop shell, allow camera access for Electron or this app in macOS settings.</li>
                   </ol>
                 )}
+              </div>
+            )}
+            {cameraSourceMode === "mobile" && mobileFeedNotice && !error && (
+              <div className="mobile-feed-notice">
+                <RadioTower size={15} />
+                <strong>{mobileFeedNotice}</strong>
               </div>
             )}
 
@@ -2921,6 +3233,52 @@ export function App() {
               />
             )}
 
+            {activeWorkspace === "effects" && (
+              <section className="camera-effects-workspace" aria-label="Camera effects">
+                <div className="mapping-header">
+                  <div>
+                    <p className="eyebrow">Camera Effects</p>
+                    <h2>{effects.find((effect) => effect.id === selectedEffect)?.label ?? "Camera Effects"}</h2>
+                  </div>
+                  <div className="mapping-summary">
+                    <span>Amount</span>
+                    <strong>{Math.round(effectAmount * 100)}%</strong>
+                  </div>
+                </div>
+                <div className="effect-list camera-effects-list">
+                  {effects.map((effect) => {
+                    const Icon = effect.icon;
+                    return (
+                      <button
+                        key={effect.id}
+                        className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
+                        onClick={() => {
+                          setSelectedEffect(effect.id);
+                          setVisualMode("camera");
+                        }}
+                        title={effect.label}
+                        type="button"
+                      >
+                        <Icon size={17} />
+                        <span>{effect.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <label className="range-control camera-effects-amount">
+                  <span>Amount</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1.4"
+                    step="0.01"
+                    value={effectAmount}
+                    onChange={(event) => setEffectAmount(Number(event.target.value))}
+                  />
+                </label>
+              </section>
+            )}
+
             {ENABLE_SHADER_WORKSPACE && (activeWorkspace === "shader" || activeWorkspace === "pads" || activeWorkspace === "mapping") && (
               <section className="shader-parameter-dock" aria-label="Shader parameters">
                 <div className="shader-parameter-dock-header">
@@ -2975,8 +3333,9 @@ export function App() {
           icon={RadioTower}
           id="output"
           onToggle={() => toggleRailSection("output")}
-          title="Output"
+          title="Send Output"
         >
+          <span className="rail-field-label">Destination</span>
           <div className="output-switcher">
             {displayOutputStatuses.map((status) => (
               <button
@@ -3013,6 +3372,7 @@ export function App() {
               </button>
             </div>
           )}
+          <span className="rail-field-label">Composition</span>
           <div className="output-composition-options" role="group" aria-label="Output composition">
             {outputCompositionModes.map((compositionMode) => (
               <button
@@ -3030,6 +3390,7 @@ export function App() {
               </button>
             ))}
           </div>
+          <span className="rail-field-label">Quality</span>
           <div className="performance-control">
             <div className="performance-options" role="group" aria-label="Output speed">
               {outputPerformanceModes.map((performanceMode) => (
@@ -3076,147 +3437,147 @@ export function App() {
 
         {ENABLE_SHADER_WORKSPACE && (
           <CollapsibleRailSection
-          collapsed={collapsedRailSections.shader}
-          icon={SlidersHorizontal}
-          id="shader"
-          onToggle={() => toggleRailSection("shader")}
-          title="Shader Player"
-        >
-          <div className="shader-scene-list">
-            {shaderLibrary.map((scene) => (
-              <div className="shader-scene-row" key={scene.id}>
-                <button
-                  className={activeShaderScene.id === scene.id ? "shader-scene-button active" : "shader-scene-button"}
-                  onClick={() => {
-                    setShaderSceneId(scene.id);
-                    setVisualMode("shader");
-                    setActiveWorkspace(activeWorkspace === "mapping" ? "mapping" : "shader");
-                  }}
-                  type="button"
-                >
-                  <strong>{scene.label}</strong>
-                  <span>{scene.imported ? scene.license || scene.author || scene.detail : scene.detail}</span>
-                </button>
-                {scene.imported && (
+            collapsed={collapsedRailSections.shader}
+            icon={SlidersHorizontal}
+            id="shader"
+            onToggle={() => toggleRailSection("shader")}
+            title="Shader Player"
+          >
+            <div className="shader-scene-list">
+              {shaderLibrary.map((scene) => (
+                <div className="shader-scene-row" key={scene.id}>
                   <button
-                    className="shader-delete-button"
-                    onClick={() => deleteShaderScene(scene.id)}
+                    className={activeShaderScene.id === scene.id ? "shader-scene-button active" : "shader-scene-button"}
+                    onClick={() => {
+                      setShaderSceneId(scene.id);
+                      setVisualMode("shader");
+                      setActiveWorkspace(activeWorkspace === "mapping" ? "mapping" : "shader");
+                    }}
                     type="button"
-                    aria-label={`Delete ${scene.label}`}
-                    title="Delete shader"
                   >
-                    <Trash2 size={15} />
+                    <strong>{scene.label}</strong>
+                    <span>{scene.imported ? scene.license || scene.author || scene.detail : scene.detail}</span>
                   </button>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="shader-importer">
-            <div className="api-credit">
-              <Link2 size={14} />
-              <span>Uses Shadertoy.com API</span>
-            </div>
-            <button
-              className={shaderFileDragActive ? "shader-drop-zone active" : "shader-drop-zone"}
-              onClick={() => shaderFileInputRef.current?.click()}
-              onDragEnter={(event) => {
-                event.preventDefault();
-                setShaderFileDragActive(true);
-              }}
-              onDragLeave={(event) => {
-                event.preventDefault();
-                setShaderFileDragActive(false);
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setShaderFileDragActive(true);
-              }}
-              onDrop={(event) => {
-                event.preventDefault();
-                importShaderFiles(event.dataTransfer.files);
-              }}
-              type="button"
-            >
-              <FileUp size={18} />
-              <strong>Drop Shader Or Preset</strong>
-              <span>.frag, .glsl, .infinightcaptureshader</span>
-            </button>
-            <input
-              ref={shaderFileInputRef}
-              accept=".infinightcaptureshader,.facevizshader,.frag,.fs,.glsl,.json,.txt,application/json,text/plain"
-              className="shader-file-input"
-              onChange={(event) => {
-                if (event.target.files) {
-                  importShaderFiles(event.target.files);
-                }
-                event.target.value = "";
-              }}
-              type="file"
-              multiple
-            />
-            <label className="shader-link-control">
-              <span>Shader URL</span>
-              <input
-                value={shaderImportLink}
-                onChange={(event) => setShaderImportLink(event.target.value)}
-                placeholder="Shadertoy, GitHub, Gist, or raw GLSL URL"
-              />
-            </label>
-            <button
-              className="shader-import-button"
-              onClick={importShaderLink}
-              type="button"
-              disabled={shaderImportBusy || !shaderImportLink.trim()}
-            >
-              {shaderImportBusy ? <Loader2 size={16} className="spin" /> : <Link2 size={16} />}
-              Add From URL
-            </button>
-            <button className="shader-import-button secondary" onClick={exportActiveShaderPreset} type="button">
-              <Download size={16} />
-              Export Active Preset
-            </button>
-            <button
-              className="shader-advanced-toggle"
-              onClick={() => setShowShaderCodeImport((current) => !current)}
-              type="button"
-            >
-              <ChevronsUpDown size={15} />
-              <span>Advanced</span>
-            </button>
-            {showShaderCodeImport && (
-              <div className="shader-code-import-panel">
-                <div className="shader-import-grid">
-                  <label>
-                    <span>Name</span>
-                    <input value={shaderImportName} onChange={(event) => setShaderImportName(event.target.value)} />
-                  </label>
-                  <label>
-                    <span>Author</span>
-                    <input value={shaderImportAuthor} onChange={(event) => setShaderImportAuthor(event.target.value)} />
-                  </label>
+                  {scene.imported && (
+                    <button
+                      className="shader-delete-button"
+                      onClick={() => deleteShaderScene(scene.id)}
+                      type="button"
+                      aria-label={`Delete ${scene.label}`}
+                      title="Delete shader"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
-                <label className="shader-import-license">
-                  <span>License</span>
-                  <input value={shaderImportLicense} onChange={(event) => setShaderImportLicense(event.target.value)} />
-                </label>
-                <label className="shader-source-control">
-                  <span>mainImage</span>
-                  <textarea
-                    spellCheck={false}
-                    value={shaderImportSource}
-                    onChange={(event) => setShaderImportSource(event.target.value)}
-                  />
-                </label>
-                <button className="shader-import-button" onClick={importShaderScene} type="button">
-                  <Code2 size={16} />
-                  Add From Code
-                </button>
+              ))}
+            </div>
+            <div className="shader-importer">
+              <div className="api-credit">
+                <Link2 size={14} />
+                <span>Uses Shadertoy.com API</span>
               </div>
-            )}
-            {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
-            {shaderImportNotice && <div className="shader-import-notice">{shaderImportNotice}</div>}
-          </div>
-        </CollapsibleRailSection>
+              <button
+                className={shaderFileDragActive ? "shader-drop-zone active" : "shader-drop-zone"}
+                onClick={() => shaderFileInputRef.current?.click()}
+                onDragEnter={(event) => {
+                  event.preventDefault();
+                  setShaderFileDragActive(true);
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  setShaderFileDragActive(false);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setShaderFileDragActive(true);
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  importShaderFiles(event.dataTransfer.files);
+                }}
+                type="button"
+              >
+                <FileUp size={18} />
+                <strong>Drop Shader Or Preset</strong>
+                <span>.frag, .glsl, .infinightcaptureshader</span>
+              </button>
+              <input
+                ref={shaderFileInputRef}
+                accept=".infinightcaptureshader,.facevizshader,.frag,.fs,.glsl,.json,.txt,application/json,text/plain"
+                className="shader-file-input"
+                onChange={(event) => {
+                  if (event.target.files) {
+                    importShaderFiles(event.target.files);
+                  }
+                  event.target.value = "";
+                }}
+                type="file"
+                multiple
+              />
+              <label className="shader-link-control">
+                <span>Shader URL</span>
+                <input
+                  value={shaderImportLink}
+                  onChange={(event) => setShaderImportLink(event.target.value)}
+                  placeholder="Shadertoy, GitHub, Gist, or raw GLSL URL"
+                />
+              </label>
+              <button
+                className="shader-import-button"
+                onClick={importShaderLink}
+                type="button"
+                disabled={shaderImportBusy || !shaderImportLink.trim()}
+              >
+                {shaderImportBusy ? <Loader2 size={16} className="spin" /> : <Link2 size={16} />}
+                Add From URL
+              </button>
+              <button className="shader-import-button secondary" onClick={exportActiveShaderPreset} type="button">
+                <Download size={16} />
+                Export Active Preset
+              </button>
+              <button
+                className="shader-advanced-toggle"
+                onClick={() => setShowShaderCodeImport((current) => !current)}
+                type="button"
+              >
+                <ChevronsUpDown size={15} />
+                <span>Advanced</span>
+              </button>
+              {showShaderCodeImport && (
+                <div className="shader-code-import-panel">
+                  <div className="shader-import-grid">
+                    <label>
+                      <span>Name</span>
+                      <input value={shaderImportName} onChange={(event) => setShaderImportName(event.target.value)} />
+                    </label>
+                    <label>
+                      <span>Author</span>
+                      <input value={shaderImportAuthor} onChange={(event) => setShaderImportAuthor(event.target.value)} />
+                    </label>
+                  </div>
+                  <label className="shader-import-license">
+                    <span>License</span>
+                    <input value={shaderImportLicense} onChange={(event) => setShaderImportLicense(event.target.value)} />
+                  </label>
+                  <label className="shader-source-control">
+                    <span>mainImage</span>
+                    <textarea
+                      spellCheck={false}
+                      value={shaderImportSource}
+                      onChange={(event) => setShaderImportSource(event.target.value)}
+                    />
+                  </label>
+                  <button className="shader-import-button" onClick={importShaderScene} type="button">
+                    <Code2 size={16} />
+                    Add From Code
+                  </button>
+                </div>
+              )}
+              {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
+              {shaderImportNotice && <div className="shader-import-notice">{shaderImportNotice}</div>}
+            </div>
+          </CollapsibleRailSection>
         )}
 
         <CollapsibleRailSection

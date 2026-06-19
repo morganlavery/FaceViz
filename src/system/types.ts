@@ -83,6 +83,32 @@ export type CameraAccessResult = {
   status: SystemStatus["cameraAccess"];
 };
 
+export type MobileFeedStatus = {
+  available: boolean;
+  sessionId: string;
+  port: number;
+  urls: string[];
+  localUrls?: string[];
+  secureUrl?: string;
+  primaryUrl: string;
+  tunnelError?: string;
+  connected: boolean;
+  hasOffer: boolean;
+  hasAnswer: boolean;
+  senderCandidateCount: number;
+  receiverCandidateCount: number;
+  updatedAt: number;
+};
+
+export type MobileFeedSignal = {
+  ok: boolean;
+  answer: RTCSessionDescriptionInit | null;
+  candidates: RTCIceCandidateInit[];
+  cursor: number;
+  connected: boolean;
+  updatedAt: number;
+};
+
 export type INFINIGHTCaptureSystemBridge = {
   getStatus: () => Promise<SystemStatus>;
   requestCameraAccess: () => Promise<CameraAccessResult>;
@@ -92,5 +118,10 @@ export type INFINIGHTCaptureSystemBridge = {
     target: OutputTarget,
     frame: { width: number; height: number; pixels: ArrayBuffer }
   ) => Promise<{ ok: boolean; target: OutputTarget; reason?: string }>;
+  getMobileFeedStatus: () => Promise<MobileFeedStatus>;
+  prepareMobileFeedOffer: (offer: RTCSessionDescriptionInit) => Promise<MobileFeedStatus>;
+  addMobileFeedReceiverCandidate: (candidate: RTCIceCandidateInit) => Promise<{ ok: boolean; cursor: number }>;
+  pollMobileFeedSignal: (senderCandidateCursor: number) => Promise<MobileFeedSignal>;
+  resetMobileFeedSession: () => Promise<MobileFeedStatus>;
   openExternalUrl: (url: string) => Promise<{ ok: boolean; reason?: string }>;
 };

@@ -1,4 +1,6 @@
 const DEFAULT_SITE_URL = "https://infinightcapture.com";
+const DEFAULT_STRIPE_PRICE_ID = "price_1TiD1bHRHfZdckNqGRr8SbBV";
+const DEFAULT_STRIPE_PRODUCT_ID = "prod_UhcGyJcNr4E0xd";
 const DEFAULT_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30;
 const WEBHOOK_TOLERANCE_SECONDS = 60 * 5;
 
@@ -24,6 +26,37 @@ export function normalizeEmail(email = "") {
 
 export function isEmailLike(email = "") {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+export function getExpectedStripePriceId(env) {
+  return env.STRIPE_PRICE_ID || DEFAULT_STRIPE_PRICE_ID;
+}
+
+export function getExpectedStripeProductId(env) {
+  return env.STRIPE_PRODUCT_ID || DEFAULT_STRIPE_PRODUCT_ID;
+}
+
+export function isExpectedPaidCheckoutSession(env, session) {
+  if (session?.mode !== "payment" || session?.payment_status !== "paid") {
+    return false;
+  }
+
+  if (session.metadata?.product !== "INFINIGHTCapture" || session.metadata?.edition !== "paid") {
+    return false;
+  }
+
+  const expectedPriceId = getExpectedStripePriceId(env);
+  const expectedProductId = getExpectedStripeProductId(env);
+  const lineItems = session.line_items?.data || [];
+  if (!lineItems.length) {
+    return true;
+  }
+
+  return lineItems.some((item) => {
+    const price = item.price;
+    const product = typeof price?.product === "string" ? price.product : price?.product?.id;
+    return (!expectedPriceId || price?.id === expectedPriceId) && (!expectedProductId || product === expectedProductId);
+  });
 }
 
 function bytesToBase64Url(bytes) {
@@ -142,6 +175,10 @@ export async function createDownloadPageUrl(env, purchase, options = {}) {
 
 export async function savePaidCheckoutSession(env, session) {
   if (!env.PURCHASES_DB) {
+    return null;
+  }
+
+  if (!isExpectedPaidCheckoutSession(env, session)) {
     return null;
   }
 

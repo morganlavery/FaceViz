@@ -2,6 +2,13 @@ const { app, ipcMain, shell, systemPreferences } = require("electron");
 const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  addMobileFeedReceiverCandidate,
+  ensureMobileFeedServer,
+  pollMobileFeedSignal,
+  prepareMobileFeedOffer,
+  resetMobileFeedSession
+} = require("./mobileFeedServer.cjs");
 
 let syphonProcess = null;
 let syphonLastError = "";
@@ -936,6 +943,15 @@ const registerSystemBridge = () => {
     if (target === "ndi") return publishNdiFrame(frame);
     return { ok: false, target, reason: "Unknown output target." };
   });
+  ipcMain.handle("infinightcapture:mobile-feed-status", () => ensureMobileFeedServer());
+  ipcMain.handle("infinightcapture:mobile-feed-offer", (_event, offer) => prepareMobileFeedOffer(offer));
+  ipcMain.handle("infinightcapture:mobile-feed-receiver-candidate", (_event, candidate) =>
+    addMobileFeedReceiverCandidate(candidate)
+  );
+  ipcMain.handle("infinightcapture:mobile-feed-signal", (_event, senderCandidateCursor) =>
+    pollMobileFeedSignal(senderCandidateCursor)
+  );
+  ipcMain.handle("infinightcapture:mobile-feed-reset", () => resetMobileFeedSession());
 };
 
 module.exports = {

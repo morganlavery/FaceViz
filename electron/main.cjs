@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { registerSystemBridge } = require("./systemBridge.cjs");
+const { shutdownMobileFeedServer } = require("./mobileFeedServer.cjs");
 
 let packagedAppOrigin = "";
 let staticServer = null;
@@ -182,6 +183,7 @@ app.whenReady().then(() => {
 
 app.on("window-all-closed", () => {
   shutdownStaticServer();
+  shutdownMobileFeedServer();
   if (process.platform !== "darwin") {
     app.quit();
   }
