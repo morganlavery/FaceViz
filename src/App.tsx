@@ -103,8 +103,9 @@ type CameraDeviceOption = {
   groupId: string;
   label: string;
 };
-type WorkspaceTab = "preview" | "shader" | "effects" | "pads" | "mapping" | "signal";
+type WorkspaceTab = "preview" | "shader" | "effects" | "warp" | "pads" | "mapping" | "signal";
 type VisualMode = "camera" | "shader";
+type PreviewCompositionMode = "composite" | "effects" | "wireframe" | "camera";
 type PerformanceLayerMode = "wireframe" | "pads" | "xy";
 type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
@@ -200,33 +201,36 @@ const FACE_MODEL =
 const ENABLE_SHADER_WORKSPACE = false;
 
 const effects = [
-  { id: "gumstretch", label: "Gum Stretch", icon: Hand },
+  { id: "gumstretch", label: "Finger + Nose Pull", icon: Hand },
   { id: "warp", label: "Pinch Warp", icon: SlidersHorizontal },
   { id: "orbit", label: "Orbit Field", icon: Sparkles },
   { id: "contour", label: "Contour Bands", icon: ScanFace }
 ];
 const effectIds = new Set(effects.map((effect) => effect.id));
+const bodyWarpEffects = effects.filter((effect) => ["gumstretch", "warp"].includes(effect.id));
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
-  { id: "preview", label: "Preview" },
-  ...(ENABLE_SHADER_WORKSPACE ? [{ id: "shader" as const, label: "Shader" }] : []),
+  { id: "preview", label: "Live View" },
+  ...(ENABLE_SHADER_WORKSPACE ? [{ id: "shader" as const, label: "Visuals" }] : []),
   { id: "effects", label: "Effects" },
-  { id: "pads", label: "Pads" },
+  { id: "warp", label: "Body Warp" },
+  { id: "pads", label: "Control Pads" },
   { id: "mapping", label: "Mapping" },
-  { id: "signal", label: "Signal" }
+  { id: "signal", label: "Signal Flow" }
 ];
 
 const workspaceTabIcons: Record<WorkspaceTab, typeof Activity> = {
   preview: ScanFace,
   shader: Sparkles,
   effects: Camera,
+  warp: Hand,
   pads: Hand,
   mapping: SlidersHorizontal,
   signal: Activity
 };
 
 const trackingPreviewModes: Array<{ id: TrackingPreviewMode; label: string; hudLabel: string; icon: typeof Activity }> = [
-  { id: "upper", label: "Head + Shoulders", hudLabel: "Upper Body", icon: ScanFace },
+  { id: "upper", label: "Upper Body", hudLabel: "Upper Body", icon: ScanFace },
   { id: "full", label: "Full Body", hudLabel: "Full Body", icon: Expand },
   { id: "face", label: "Face Gestures", hudLabel: "Face Gestures", icon: Smile },
   { id: "handsFace", label: "Hands + Face", hudLabel: "Hands + Face", icon: Hand }
@@ -236,6 +240,13 @@ const performanceLayerModes: Array<{ id: PerformanceLayerMode; label: string; hu
   { id: "wireframe", label: "Wireframe", hudLabel: "Wireframe", icon: ScanFace },
   { id: "pads", label: "Drum Pads", hudLabel: "Pad Mode", icon: Hand },
   { id: "xy", label: "XY Boxes", hudLabel: "XY Mode", icon: SlidersHorizontal }
+];
+
+const previewCompositionModes: Array<{ id: PreviewCompositionMode; label: string; detail: string; icon: typeof Activity }> = [
+  { id: "composite", label: "Composite", detail: "Effects and tracking rig", icon: Sparkles },
+  { id: "effects", label: "Effects", detail: "Effect feed without rig", icon: Camera },
+  { id: "wireframe", label: "Wireframe", detail: "Tracking rig only", icon: ScanFace },
+  { id: "camera", label: "Camera", detail: "Clean camera feed", icon: Expand }
 ];
 
 const defaultShaderImportSource = `void mainImage(out vec4 fragColor, in vec2 fragCoord) {
@@ -1193,7 +1204,8 @@ export function App() {
   const [latency, setLatency] = useState(0);
   const [mode, setMode] = useState<TrackingPreviewMode>("upper");
   const [performanceLayerMode, setPerformanceLayerMode] = useState<PerformanceLayerMode>("wireframe");
-  const showRig = performanceLayerMode === "wireframe";
+  const [previewCompositionMode, setPreviewCompositionMode] = useState<PreviewCompositionMode>("composite");
+  const showRig = previewCompositionMode === "composite" || previewCompositionMode === "wireframe";
   const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
@@ -1309,6 +1321,11 @@ export function App() {
   const selectedOutputComposition =
     outputCompositionModes.find((compositionMode) => compositionMode.id === outputCompositionMode) ??
     outputCompositionModes[0];
+  const activePreviewCompositionMode =
+    previewCompositionModes.find((compositionMode) => compositionMode.id === previewCompositionMode) ??
+    previewCompositionModes[0];
+  const previewSelectedEffect =
+    previewCompositionMode === "wireframe" || previewCompositionMode === "camera" ? "none" : selectedEffect;
   const shaderLibrary = useMemo(() => [...shaderScenes, ...importedShaderScenes], [importedShaderScenes]);
   const activeShaderScene = useMemo(() => getShaderSceneFromLibrary(shaderSceneId, shaderLibrary), [shaderLibrary, shaderSceneId]);
   const shaderValues = useMemo(
@@ -2367,7 +2384,7 @@ export function App() {
     compositorOptionsRef.current = {
       showRig,
       effectAmount: reducedMotion ? Math.min(effectAmount, 0.4) : effectAmount,
-      selectedEffect,
+      selectedEffect: previewSelectedEffect,
       visualMode,
       trackingMode: mode,
       shaderScene: activeShaderScene,
@@ -2406,6 +2423,7 @@ export function App() {
     showRig,
     mode,
     performanceLayerMode,
+    previewSelectedEffect,
     visualMode
   ]);
 
@@ -2830,7 +2848,7 @@ export function App() {
 
   const selectWorkspace = useCallback((tab: WorkspaceTab) => {
     setActiveWorkspace(tab);
-    if (tab === "preview" || tab === "effects") {
+    if (tab === "preview" || tab === "effects" || tab === "warp") {
       setVisualMode("camera");
     }
     if (ENABLE_SHADER_WORKSPACE && (tab === "shader" || tab === "pads" || tab === "mapping")) {
@@ -2941,18 +2959,73 @@ export function App() {
           })}
         </nav>
 
+        {activeWorkspace !== "signal" && captureState !== "running" && (
+          <section className="quickstart-panel" aria-label="Quick start">
+            <div className="quickstart-copy">
+              <p className="eyebrow">Start Here</p>
+              <h1>Turn body movement into live visuals.</h1>
+              <p>Choose a camera, start tracking, then shape the look with effects or control pads.</p>
+            </div>
+            <div className="quickstart-steps" aria-label="Basic workflow">
+              <div className="quickstart-step active">
+                <Camera size={16} />
+                <span>1</span>
+                <strong>Pick input</strong>
+              </div>
+              <div className="quickstart-step">
+                <Play size={16} />
+                <span>2</span>
+                <strong>Start camera</strong>
+              </div>
+              <div className="quickstart-step">
+                <Sparkles size={16} />
+                <span>3</span>
+                <strong>Perform</strong>
+              </div>
+            </div>
+            <div className="quickstart-actions">
+              <div>
+                <span>Current input</span>
+                <strong>{selectedSourceLabel}</strong>
+              </div>
+              <button className="quickstart-primary" onClick={startSelectedCapture} disabled={captureState === "loading"} type="button">
+                {captureState === "loading" ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
+                {captureState === "loading" ? "Opening Camera" : "Start Camera"}
+              </button>
+            </div>
+          </section>
+        )}
+
         <section
           className={activeWorkspace !== "signal" ? "stage-panel" : "stage-panel preview-stage-hidden"}
           aria-hidden={activeWorkspace === "signal"}
         >
           <div className="stage-toolbar">
             <div className="hud-badge">
-              <span>{visualMode === "shader" ? "Scene" : "Authority"}</span>
+              <span>{visualMode === "shader" ? "Visual" : "Output"}</span>
               <strong>{visualMode === "shader" ? activeShaderScene.label : selectedOutput?.label ?? "Output"}</strong>
             </div>
             <div className="hud-badge align-right">
-              <span>Mode</span>
-              <strong>{activePerformanceLayerMode.hudLabel}</strong>
+              <span>Preview</span>
+              <strong>{activePreviewCompositionMode.label}</strong>
+            </div>
+            <div className="preview-mode-switch" role="group" aria-label="Preview composition">
+              {previewCompositionModes.map((compositionMode) => {
+                const ModeIcon = compositionMode.icon;
+                return (
+                  <button
+                    className={previewCompositionMode === compositionMode.id ? "preview-mode-button active" : "preview-mode-button"}
+                    key={compositionMode.id}
+                    onClick={() => setPreviewCompositionMode(compositionMode.id)}
+                    title={compositionMode.detail}
+                    type="button"
+                    aria-label={`Preview ${compositionMode.label}`}
+                  >
+                    <ModeIcon size={15} />
+                    <span>{compositionMode.label}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
           <canvas ref={canvasRef} className="preview-canvas" aria-label="INFINIGHTCapture composited preview" />
@@ -2961,7 +3034,107 @@ export function App() {
           )}
         </section>
 
-        {activeWorkspace !== "signal" && (
+        {activeWorkspace === "effects" && (
+          <section className="camera-effects-workspace camera-effects-under-monitor" aria-label="Camera effects">
+            <div className="mapping-header">
+              <div>
+                <p className="eyebrow">Camera Effects</p>
+                <h2>{effects.find((effect) => effect.id === selectedEffect)?.label ?? "Camera Effects"}</h2>
+              </div>
+              <div className="mapping-summary">
+                <span>Amount</span>
+                <strong>{Math.round(effectAmount * 100)}%</strong>
+              </div>
+            </div>
+            <div className="effect-list camera-effects-list">
+              {effects.map((effect) => {
+                const Icon = effect.icon;
+                return (
+                  <button
+                    key={effect.id}
+                    className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
+                    onClick={() => {
+                      setSelectedEffect(effect.id);
+                      setVisualMode("camera");
+                    }}
+                    title={effect.label}
+                    type="button"
+                  >
+                    <Icon size={17} />
+                    <span>{effect.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <label className="range-control camera-effects-amount">
+              <span>Amount</span>
+              <input
+                type="range"
+                min="0"
+                max="1.4"
+                step="0.01"
+                value={effectAmount}
+                onChange={(event) => setEffectAmount(Number(event.target.value))}
+              />
+            </label>
+          </section>
+        )}
+
+        {activeWorkspace === "warp" && (
+          <section className="camera-effects-workspace body-warp-workspace camera-effects-under-monitor" aria-label="Body warp effects">
+            <div className="mapping-header">
+              <div>
+                <p className="eyebrow">Body Warp</p>
+                <h2>{bodyWarpEffects.find((effect) => effect.id === selectedEffect)?.label ?? "Finger + Nose Pull"}</h2>
+              </div>
+              <div className="mapping-summary">
+                <span>Amount</span>
+                <strong>{Math.round(effectAmount * 100)}%</strong>
+              </div>
+            </div>
+            <div className="body-warp-grid">
+              <div className="effect-list camera-effects-list">
+                {bodyWarpEffects.map((effect) => {
+                  const Icon = effect.icon;
+                  return (
+                    <button
+                      key={effect.id}
+                      className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
+                      onClick={() => {
+                        setSelectedEffect(effect.id);
+                        setPreviewCompositionMode("composite");
+                        setVisualMode("camera");
+                      }}
+                      title={effect.label}
+                      type="button"
+                    >
+                      <Icon size={17} />
+                      <span>{effect.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="body-warp-status" aria-label="Body warp tracking status">
+                <Metric icon={Hand} label="Pinch" value={motion?.gestures.pinch ? "Active" : "Idle"} />
+                <Metric icon={ScanFace} label="Face" value={motion?.face ? "Active" : "None"} />
+                <Metric icon={Fingerprint} label="Intent" value={motion?.dominantIntent ?? "Neutral stance"} />
+              </div>
+            </div>
+            <label className="range-control camera-effects-amount">
+              <span>Amount</span>
+              <input
+                type="range"
+                min="0"
+                max="1.4"
+                step="0.01"
+                value={effectAmount}
+                onChange={(event) => setEffectAmount(Number(event.target.value))}
+              />
+            </label>
+          </section>
+        )}
+
+        {activeWorkspace !== "signal" && captureState === "running" && (
           <ViewerMotionHud
             motion={motion}
             scene={activeShaderScene}
@@ -2989,7 +3162,7 @@ export function App() {
               <label className="camera-source-control">
                 <span>
                   <Camera size={15} />
-                  Source
+                  Input
                 </span>
                 <div className="source-select-shell">
                   <select
@@ -3090,6 +3263,10 @@ export function App() {
             )}
 
             <section className="transport-row" aria-label="Capture controls">
+              <div className="transport-intro">
+                <span>Tracking View</span>
+                <strong>{activeTrackingMode.label}</strong>
+              </div>
               {trackingPreviewModes.map((previewMode) => {
                 const ModeIcon = previewMode.icon;
                 return (
@@ -3112,7 +3289,7 @@ export function App() {
               ) : (
                 <button className="start-button" onClick={startSelectedCapture} disabled={captureState === "loading"}>
                   {captureState === "loading" ? <Loader2 size={17} className="spin" /> : <Play size={17} />}
-                  Start
+                  {captureState === "loading" ? "Opening" : "Start Camera"}
                 </button>
               )}
             </section>
@@ -3154,6 +3331,10 @@ export function App() {
             )}
 
             <section className="telemetry-grid">
+              <div className="telemetry-intro">
+                <span>Live Status</span>
+                <strong>{captureState === "running" ? "Tracking movement" : "Waiting for camera"}</strong>
+              </div>
               <Metric icon={Activity} label="Confidence" value={`${Math.round((motion?.confidence ?? 0) * 100)}%`} />
               <Metric icon={Cpu} label="Latency" value={`${Math.round(latency)} ms`} />
               <Metric icon={RadioTower} label="Rate" value={`${fps} fps`} />
@@ -3279,52 +3460,6 @@ export function App() {
               />
             )}
 
-            {activeWorkspace === "effects" && (
-              <section className="camera-effects-workspace" aria-label="Camera effects">
-                <div className="mapping-header">
-                  <div>
-                    <p className="eyebrow">Camera Effects</p>
-                    <h2>{effects.find((effect) => effect.id === selectedEffect)?.label ?? "Camera Effects"}</h2>
-                  </div>
-                  <div className="mapping-summary">
-                    <span>Amount</span>
-                    <strong>{Math.round(effectAmount * 100)}%</strong>
-                  </div>
-                </div>
-                <div className="effect-list camera-effects-list">
-                  {effects.map((effect) => {
-                    const Icon = effect.icon;
-                    return (
-                      <button
-                        key={effect.id}
-                        className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
-                        onClick={() => {
-                          setSelectedEffect(effect.id);
-                          setVisualMode("camera");
-                        }}
-                        title={effect.label}
-                        type="button"
-                      >
-                        <Icon size={17} />
-                        <span>{effect.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <label className="range-control camera-effects-amount">
-                  <span>Amount</span>
-                  <input
-                    type="range"
-                    min="0"
-                    max="1.4"
-                    step="0.01"
-                    value={effectAmount}
-                    onChange={(event) => setEffectAmount(Number(event.target.value))}
-                  />
-                </label>
-              </section>
-            )}
-
             {ENABLE_SHADER_WORKSPACE && (activeWorkspace === "shader" || activeWorkspace === "pads" || activeWorkspace === "mapping") && (
               <section className="shader-parameter-dock" aria-label="Shader parameters">
                 <div className="shader-parameter-dock-header">
@@ -3379,9 +3514,9 @@ export function App() {
           icon={RadioTower}
           id="output"
           onToggle={() => toggleRailSection("output")}
-          title="Send Output"
+          title="Output Destinations"
         >
-          <span className="rail-field-label">Destination</span>
+          <span className="rail-field-label">Send to</span>
           <div className="output-switcher">
             {displayOutputStatuses.map((status) => (
               <button
@@ -3402,7 +3537,7 @@ export function App() {
           ) : (
             <button className="output-action" onClick={startOutput} disabled={!selectedOutput?.available}>
               <RadioTower size={16} />
-              Start {selectedOutput?.label ?? "Native"} Output
+              Start {selectedOutput?.label ?? "Live"} Broadcast
             </button>
           )}
           {isDemoEdition && (
@@ -3418,7 +3553,7 @@ export function App() {
               </button>
             </div>
           )}
-          <span className="rail-field-label">Composition</span>
+          <span className="rail-field-label">What to send</span>
           <div className="output-composition-options" role="group" aria-label="Output composition">
             {outputCompositionModes.map((compositionMode) => (
               <button
@@ -3436,7 +3571,7 @@ export function App() {
               </button>
             ))}
           </div>
-          <span className="rail-field-label">Quality</span>
+          <span className="rail-field-label">Stream quality</span>
           <div className="performance-control">
             <div className="performance-options" role="group" aria-label="Output speed">
               {outputPerformanceModes.map((performanceMode) => (
@@ -4935,8 +5070,8 @@ function EmptyState({ captureState, cameraIssue }: { captureState: CaptureState;
   return (
     <div className="empty-state">
       <Camera size={36} />
-      <strong>{captureState === "loading" ? "Opening camera" : "Camera standing by"}</strong>
-      <span>{captureState === "loading" ? "Waiting for the webcam stream" : "Start capture to activate landmarks and effects"}</span>
+      <strong>{captureState === "loading" ? "Opening camera" : "Ready for your camera"}</strong>
+      <span>{captureState === "loading" ? "Waiting for the live feed" : "Use Start Camera below to begin tracking movement."}</span>
     </div>
   );
 }

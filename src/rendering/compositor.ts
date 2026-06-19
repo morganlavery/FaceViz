@@ -83,6 +83,7 @@ const GUM_PINCH_ENGAGE = 0.64;
 const GUM_PINCH_RELEASE = 0.38;
 const GUM_ATTACH_RADIUS = 0.085;
 const GUM_CHEEK_ATTACH_RADIUS = 0.13;
+const GUM_FACE_ATTACH_RADIUS = 0.105;
 const GUM_SNAP_DURATION = 340;
 
 export type TrackingPreviewMode = "upper" | "full" | "face" | "handsFace";
@@ -135,7 +136,7 @@ let motionShaderPlayer: MotionShaderPlayer | null = null;
 type GumStretchTarget = {
   anchor: Vec2;
   tip: Vec2;
-  label: "hand" | "cheek";
+  label: "hand" | "face";
   strength: number;
 };
 
@@ -146,7 +147,7 @@ type GumStretchRuntime = {
   smoothedTip: Vec2;
   snapStartTip: Vec2;
   snapStartedAt: number;
-  targetLabel: "hand" | "cheek";
+  targetLabel: "hand" | "face";
 };
 
 const gumStretchRuntimes = new WeakMap<HTMLCanvasElement, GumStretchRuntime>();
@@ -635,13 +636,14 @@ const getBestGumStretchTarget = (motion: MotionFrame): GumStretchTarget | null =
       | undefined;
 
     motion.hands.forEach((bodyHand, bodyIndex) => {
-      if (bodyIndex === grabber.index) return;
       GUM_FINGER_TIPS.forEach((tipIndex) => {
+        if (bodyIndex === grabber.index && tipIndex === 8) return;
         const grabbedTip = bodyHand.landmarks[tipIndex];
         const anchor = bodyHand.landmarks[GUM_FINGER_ROOTS[tipIndex]];
         if (!grabbedTip || !anchor || !grabber.pinchPoint) return;
         const grabDistance = distance(grabbedTip, grabber.pinchPoint);
-        if (grabDistance < GUM_ATTACH_RADIUS && (!best || grabDistance < best.distance)) {
+        const attachRadius = bodyIndex === grabber.index ? GUM_ATTACH_RADIUS * 0.68 : GUM_ATTACH_RADIUS;
+        if (grabDistance < attachRadius && (!best || grabDistance < best.distance)) {
           best = {
             distance: grabDistance,
             anchor,
@@ -665,17 +667,25 @@ const getBestGumStretchTarget = (motion: MotionFrame): GumStretchTarget | null =
     return null;
   }
 
-  const cheekAnchors = [motion.face.leftCheek, motion.face.rightCheek].filter(Boolean) as Vec2[];
+  const faceAnchors = [
+    { anchor: motion.face.nose, radius: GUM_FACE_ATTACH_RADIUS },
+    { anchor: motion.face.chin, radius: GUM_FACE_ATTACH_RADIUS },
+    { anchor: motion.face.leftCheek, radius: GUM_CHEEK_ATTACH_RADIUS },
+    { anchor: motion.face.rightCheek, radius: GUM_CHEEK_ATTACH_RADIUS },
+    { anchor: motion.face.leftEar, radius: GUM_CHEEK_ATTACH_RADIUS },
+    { anchor: motion.face.rightEar, radius: GUM_CHEEK_ATTACH_RADIUS }
+  ].filter((entry): entry is { anchor: Vec2; radius: number } => Boolean(entry.anchor));
   for (const grabber of pinchingHands) {
     if (!grabber.pinchPoint) continue;
-    const cheek = cheekAnchors
-      .map((anchor) => ({ anchor, distance: distance(anchor, grabber.pinchPoint as Vec2) }))
+    const faceTarget = faceAnchors
+      .map((entry) => ({ ...entry, distance: distance(entry.anchor, grabber.pinchPoint as Vec2) }))
+      .filter((entry) => entry.distance < entry.radius)
       .sort((a, b) => a.distance - b.distance)[0];
-    if (cheek && cheek.distance < GUM_CHEEK_ATTACH_RADIUS) {
+    if (faceTarget) {
       return {
-        anchor: cheek.anchor,
+        anchor: faceTarget.anchor,
         tip: grabber.pinchPoint,
-        label: "cheek",
+        label: "face",
         strength: grabber.hand.pinch
       };
     }
@@ -698,7 +708,7 @@ const drawGumTube = (
   height: number,
   amount: number,
   strength: number,
-  label: "hand" | "cheek"
+  label: "hand" | "face"
 ) => {
   const start = pointToCanvas(anchor, width, height);
   const end = pointToCanvas(tip, width, height);
@@ -709,7 +719,7 @@ const drawGumTube = (
   const dy = end.y - start.y;
   const invLength = 1 / Math.max(0.001, length);
   const normal = { x: -dy * invLength, y: dx * invLength };
-  const handedBulge = label === "cheek" ? -1 : 1;
+  const handedBulge = label === "face" ? -1 : 1;
   const bulge = Math.min(length * 0.16, 72 * amount) * handedBulge;
   const control = {
     x: (start.x + end.x) / 2 + normal.x * bulge,
@@ -758,7 +768,7 @@ const drawGumTube = (
     }
   });
   ctx.closePath();
-  ctx.fillStyle = label === "cheek" ? "rgba(255, 104, 138, 0.88)" : "rgba(237, 62, 88, 0.9)";
+  ctx.fillStyle = label === "face" ? "rgba(255, 104, 138, 0.88)" : "rgba(237, 62, 88, 0.9)";
   ctx.fill();
   ctx.strokeStyle = "rgba(116, 18, 34, 0.68)";
   ctx.lineWidth = Math.max(2, rootWidth * 0.12);
