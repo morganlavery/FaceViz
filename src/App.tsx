@@ -16,7 +16,6 @@ import {
   Link2,
   Loader2,
   Maximize2,
-  MonitorCog,
   Pause,
   Play,
   RadioTower,
@@ -109,7 +108,7 @@ type VisualMode = "camera" | "shader";
 type PerformanceLayerMode = "wireframe" | "pads" | "xy";
 type OutputCompositionMode = "shader" | "shaderWire" | "shaderWireCamera";
 type OutputPerformanceMode = "max" | "turbo" | "live" | "sharp";
-type RailSectionId = "output" | "system" | "shader" | "effects" | "face" | "tracking";
+type RailSectionId = "output";
 type GestureActionTrigger = "started" | "held" | "released" | "repeated" | "latched";
 type GestureActionType = "shaderParameter" | "effect" | "outputMode" | "keyboard" | "midi" | "osc";
 type GestureActionCurve = "linear" | "easeIn" | "easeOut" | "snap";
@@ -1206,12 +1205,7 @@ export function App() {
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceTab>("preview");
   const [visualMode, setVisualMode] = useState<VisualMode>("camera");
   const [collapsedRailSections, setCollapsedRailSections] = useState<Record<RailSectionId, boolean>>({
-    output: false,
-    system: false,
-    shader: false,
-    effects: false,
-    face: false,
-    tracking: false
+    output: false
   });
   const [faceGestureCalibration, setFaceGestureCalibration] = useState<FaceGestureCalibration>(() => {
     try {
@@ -3212,6 +3206,58 @@ export function App() {
                   onReset={resetGestureActionMatrix}
                   onUpdate={updateGestureActionRoute}
                 />
+                <section className="control-tuning-workspace" aria-label="Control tuning">
+                  <div className="mapping-header">
+                    <div>
+                      <p className="eyebrow">Control Tuning</p>
+                      <h2>Face and Gesture Parameters</h2>
+                    </div>
+                    <div className="mapping-summary">
+                      <span>Layer</span>
+                      <strong>{activePerformanceLayerMode.label}</strong>
+                    </div>
+                  </div>
+                  <div className="control-tuning-grid">
+                    <div className="control-tuning-panel">
+                      <div className="control-tuning-panel-header">
+                        <span>Face Control</span>
+                        <strong>{motion?.face ? "Active" : "No face"}</strong>
+                      </div>
+                      <FaceCalibrationPanel
+                        calibration={faceGestureCalibration}
+                        motion={motion}
+                        onCaptureLive={captureLiveFaceThreshold}
+                        onCaptureNeutral={captureNeutralFaceCalibration}
+                        onReset={resetFaceGestureCalibration}
+                        onUpdate={updateFaceGestureCalibration}
+                      />
+                    </div>
+                    <div className="control-tuning-panel">
+                      <div className="control-tuning-panel-header">
+                        <span>Tracking</span>
+                        <strong>{activePerformanceLayerMode.label}</strong>
+                      </div>
+                      <div className="tracking-mode-readout">
+                        <span>Performance layer</span>
+                        <strong>{activePerformanceLayerMode.label}</strong>
+                      </div>
+                      <div className="gesture-stack">
+                        {activeGestures.map((gesture) => (
+                          <span key={gesture} className="gesture-token">
+                            {gesture}
+                          </span>
+                        ))}
+                      </div>
+                      <GestureStateMachinePanel
+                        config={gestureStateMachineConfig}
+                        controls={motion?.gestureControls}
+                        onReset={resetGestureStateMachineConfig}
+                        onToggleLatch={toggleGestureLatch}
+                        onUpdate={updateGestureStateMachineConfig}
+                      />
+                    </div>
+                  </div>
+                </section>
               </section>
             )}
 
@@ -3411,258 +3457,6 @@ export function App() {
           {outputError && <div className="output-error">{outputError}</div>}
         </CollapsibleRailSection>
 
-        <CollapsibleRailSection
-          collapsed={collapsedRailSections.system}
-          icon={MonitorCog}
-          id="system"
-          onToggle={() => toggleRailSection("system")}
-          title="System Core"
-        >
-          <div className="system-stack">
-            <SystemRow label="Runtime" value={systemStatus?.runtime === "electron" ? "Electron shell" : "Browser preview"} />
-            <SystemRow label="Platform" value={systemStatus?.platform ?? "Detecting"} />
-            <SystemRow label="Camera" value={systemStatus?.cameraAccess ?? "unknown"} />
-            <SystemRow
-              label="Native bridge"
-              value={systemStatus?.nativeBridge.available ? `v${systemStatus.nativeBridge.version ?? 1}` : "Unavailable"}
-            />
-            <SystemRow label={`${selectedOutput?.label ?? "Output"} sender`} value={selectedSystemOutput?.state ?? "pending"} />
-          </div>
-          <NativeOutputDiagnostics
-            output={selectedNativeOutput}
-            target={outputTarget}
-            contract={systemStatus?.nativeBridge.outputContract}
-          />
-        </CollapsibleRailSection>
-
-        {ENABLE_SHADER_WORKSPACE && (
-          <CollapsibleRailSection
-            collapsed={collapsedRailSections.shader}
-            icon={SlidersHorizontal}
-            id="shader"
-            onToggle={() => toggleRailSection("shader")}
-            title="Shader Player"
-          >
-            <div className="shader-scene-list">
-              {shaderLibrary.map((scene) => (
-                <div className="shader-scene-row" key={scene.id}>
-                  <button
-                    className={activeShaderScene.id === scene.id ? "shader-scene-button active" : "shader-scene-button"}
-                    onClick={() => {
-                      setShaderSceneId(scene.id);
-                      setVisualMode("shader");
-                      setActiveWorkspace(activeWorkspace === "mapping" ? "mapping" : "shader");
-                    }}
-                    type="button"
-                  >
-                    <strong>{scene.label}</strong>
-                    <span>{scene.imported ? scene.license || scene.author || scene.detail : scene.detail}</span>
-                  </button>
-                  {scene.imported && (
-                    <button
-                      className="shader-delete-button"
-                      onClick={() => deleteShaderScene(scene.id)}
-                      type="button"
-                      aria-label={`Delete ${scene.label}`}
-                      title="Delete shader"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="shader-importer">
-              <div className="api-credit">
-                <Link2 size={14} />
-                <span>Uses Shadertoy.com API</span>
-              </div>
-              <button
-                className={shaderFileDragActive ? "shader-drop-zone active" : "shader-drop-zone"}
-                onClick={() => shaderFileInputRef.current?.click()}
-                onDragEnter={(event) => {
-                  event.preventDefault();
-                  setShaderFileDragActive(true);
-                }}
-                onDragLeave={(event) => {
-                  event.preventDefault();
-                  setShaderFileDragActive(false);
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  setShaderFileDragActive(true);
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  importShaderFiles(event.dataTransfer.files);
-                }}
-                type="button"
-              >
-                <FileUp size={18} />
-                <strong>Drop Shader Or Preset</strong>
-                <span>.frag, .glsl, .infinightcaptureshader</span>
-              </button>
-              <input
-                ref={shaderFileInputRef}
-                accept=".infinightcaptureshader,.facevizshader,.frag,.fs,.glsl,.json,.txt,application/json,text/plain"
-                className="shader-file-input"
-                onChange={(event) => {
-                  if (event.target.files) {
-                    importShaderFiles(event.target.files);
-                  }
-                  event.target.value = "";
-                }}
-                type="file"
-                multiple
-              />
-              <label className="shader-link-control">
-                <span>Shader URL</span>
-                <input
-                  value={shaderImportLink}
-                  onChange={(event) => setShaderImportLink(event.target.value)}
-                  placeholder="Shadertoy, GitHub, Gist, or raw GLSL URL"
-                />
-              </label>
-              <button
-                className="shader-import-button"
-                onClick={importShaderLink}
-                type="button"
-                disabled={shaderImportBusy || !shaderImportLink.trim()}
-              >
-                {shaderImportBusy ? <Loader2 size={16} className="spin" /> : <Link2 size={16} />}
-                Add From URL
-              </button>
-              <button className="shader-import-button secondary" onClick={exportActiveShaderPreset} type="button">
-                <Download size={16} />
-                Export Active Preset
-              </button>
-              <button
-                className="shader-advanced-toggle"
-                onClick={() => setShowShaderCodeImport((current) => !current)}
-                type="button"
-              >
-                <ChevronsUpDown size={15} />
-                <span>Advanced</span>
-              </button>
-              {showShaderCodeImport && (
-                <div className="shader-code-import-panel">
-                  <div className="shader-import-grid">
-                    <label>
-                      <span>Name</span>
-                      <input value={shaderImportName} onChange={(event) => setShaderImportName(event.target.value)} />
-                    </label>
-                    <label>
-                      <span>Author</span>
-                      <input value={shaderImportAuthor} onChange={(event) => setShaderImportAuthor(event.target.value)} />
-                    </label>
-                  </div>
-                  <label className="shader-import-license">
-                    <span>License</span>
-                    <input value={shaderImportLicense} onChange={(event) => setShaderImportLicense(event.target.value)} />
-                  </label>
-                  <label className="shader-source-control">
-                    <span>mainImage</span>
-                    <textarea
-                      spellCheck={false}
-                      value={shaderImportSource}
-                      onChange={(event) => setShaderImportSource(event.target.value)}
-                    />
-                  </label>
-                  <button className="shader-import-button" onClick={importShaderScene} type="button">
-                    <Code2 size={16} />
-                    Add From Code
-                  </button>
-                </div>
-              )}
-              {shaderImportError && <div className="shader-import-error">{shaderImportError}</div>}
-              {shaderImportNotice && <div className="shader-import-notice">{shaderImportNotice}</div>}
-            </div>
-          </CollapsibleRailSection>
-        )}
-
-        <CollapsibleRailSection
-          collapsed={collapsedRailSections.effects}
-          icon={Sparkles}
-          id="effects"
-          onToggle={() => toggleRailSection("effects")}
-          title="Camera Effects"
-        >
-          <div className="effect-list">
-            {effects.map((effect) => {
-              const Icon = effect.icon;
-              return (
-                <button
-                  key={effect.id}
-                  className={selectedEffect === effect.id ? "effect-button active" : "effect-button"}
-                  onClick={() => {
-                    setSelectedEffect(effect.id);
-                    setVisualMode("camera");
-                    setActiveWorkspace("preview");
-                  }}
-                  title={effect.label}
-                >
-                  <Icon size={17} />
-                  <span>{effect.label}</span>
-                </button>
-              );
-            })}
-          </div>
-          <label className="range-control">
-            <span>Amount</span>
-            <input
-              type="range"
-              min="0"
-              max="1.4"
-              step="0.01"
-              value={effectAmount}
-              onChange={(event) => setEffectAmount(Number(event.target.value))}
-            />
-          </label>
-        </CollapsibleRailSection>
-
-        <CollapsibleRailSection
-          collapsed={collapsedRailSections.face}
-          icon={Smile}
-          id="face"
-          onToggle={() => toggleRailSection("face")}
-          title="Face Control"
-        >
-          <FaceCalibrationPanel
-            calibration={faceGestureCalibration}
-            motion={motion}
-            onCaptureLive={captureLiveFaceThreshold}
-            onCaptureNeutral={captureNeutralFaceCalibration}
-            onReset={resetFaceGestureCalibration}
-            onUpdate={updateFaceGestureCalibration}
-          />
-        </CollapsibleRailSection>
-
-        <CollapsibleRailSection
-          collapsed={collapsedRailSections.tracking}
-          icon={ScanFace}
-          id="tracking"
-          onToggle={() => toggleRailSection("tracking")}
-          title="Tracking"
-        >
-          <div className="tracking-mode-readout">
-            <span>Performance layer</span>
-            <strong>{activePerformanceLayerMode.label}</strong>
-          </div>
-          <div className="gesture-stack">
-            {activeGestures.map((gesture) => (
-              <span key={gesture} className="gesture-token">
-                {gesture}
-              </span>
-            ))}
-          </div>
-          <GestureStateMachinePanel
-            config={gestureStateMachineConfig}
-            controls={motion?.gestureControls}
-            onReset={resetGestureStateMachineConfig}
-            onToggleLatch={toggleGestureLatch}
-            onUpdate={updateGestureStateMachineConfig}
-          />
-        </CollapsibleRailSection>
       </aside>
     </main>
   );
