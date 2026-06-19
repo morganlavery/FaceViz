@@ -72,6 +72,18 @@ const FACE_LEFT_EYE_INDICES = [33, 133, 145, 153, 159, 160, 161, 163, 173, 246];
 const FACE_RIGHT_EYE_INDICES = [263, 362, 374, 380, 386, 387, 388, 390, 398, 466];
 const HAND_TIP_INDICES = [4, 8, 12, 16, 20];
 const HAND_GRAPHIC_ANCHORS = [0, 4, 8, 12, 16, 20];
+const GUM_FINGER_TIPS = [8, 12, 16, 20] as const;
+const GUM_FINGER_ROOTS: Record<(typeof GUM_FINGER_TIPS)[number], number> = {
+  8: 5,
+  12: 9,
+  16: 13,
+  20: 17
+};
+const GUM_PINCH_ENGAGE = 0.64;
+const GUM_PINCH_RELEASE = 0.38;
+const GUM_ATTACH_RADIUS = 0.085;
+const GUM_CHEEK_ATTACH_RADIUS = 0.13;
+const GUM_SNAP_DURATION = 340;
 
 export type TrackingPreviewMode = "upper" | "full" | "face" | "handsFace";
 
@@ -119,6 +131,25 @@ export type CompositorOptions = {
 };
 
 let motionShaderPlayer: MotionShaderPlayer | null = null;
+
+type GumStretchTarget = {
+  anchor: Vec2;
+  tip: Vec2;
+  label: "hand" | "cheek";
+  strength: number;
+};
+
+type GumStretchRuntime = {
+  phase: "idle" | "stretching" | "snapping";
+  anchor: Vec2;
+  tip: Vec2;
+  smoothedTip: Vec2;
+  snapStartTip: Vec2;
+  snapStartedAt: number;
+  targetLabel: "hand" | "cheek";
+};
+
+const gumStretchRuntimes = new WeakMap<HTMLCanvasElement, GumStretchRuntime>();
 
 const drawLine = (
   ctx: CanvasRenderingContext2D,
@@ -570,6 +601,237 @@ const drawPinchWarp = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width
     }
     ctx.restore();
   });
+};
+
+const midpoint = (a: Vec2, b: Vec2): Vec2 => ({
+  x: (a.x + b.x) / 2,
+  y: (a.y + b.y) / 2
+});
+
+const mixPoint = (a: Vec2, b: Vec2, t: number): Vec2 => ({
+  x: a.x + (b.x - a.x) * t,
+  y: a.y + (b.y - a.y) * t
+});
+
+const getPinchPoint = (hand: MotionFrame["hands"][number]): Vec2 | undefined => {
+  const thumb = hand.landmarks[4];
+  const index = hand.landmarks[8];
+  return thumb && index ? midpoint(thumb, index) : undefined;
+};
+
+const getBestGumStretchTarget = (motion: MotionFrame): GumStretchTarget | null => {
+  const pinchingHands = motion.hands
+    .map((hand, index) => ({ hand, index, pinchPoint: getPinchPoint(hand) }))
+    .filter((entry) => entry.pinchPoint && entry.hand.pinch > GUM_PINCH_ENGAGE)
+    .sort((a, b) => b.hand.pinch - a.hand.pinch);
+
+  for (const grabber of pinchingHands) {
+    let best:
+      | {
+          distance: number;
+          anchor: Vec2;
+          tip: Vec2;
+        }
+      | undefined;
+
+    motion.hands.forEach((bodyHand, bodyIndex) => {
+      if (bodyIndex === grabber.index) return;
+      GUM_FINGER_TIPS.forEach((tipIndex) => {
+        const grabbedTip = bodyHand.landmarks[tipIndex];
+        const anchor = bodyHand.landmarks[GUM_FINGER_ROOTS[tipIndex]];
+        if (!grabbedTip || !anchor || !grabber.pinchPoint) return;
+        const grabDistance = distance(grabbedTip, grabber.pinchPoint);
+        if (grabDistance < GUM_ATTACH_RADIUS && (!best || grabDistance < best.distance)) {
+          best = {
+            distance: grabDistance,
+            anchor,
+            tip: grabber.pinchPoint
+          };
+        }
+      });
+    });
+
+    if (best) {
+      return {
+        anchor: best.anchor,
+        tip: best.tip,
+        label: "hand",
+        strength: grabber.hand.pinch
+      };
+    }
+  }
+
+  if (!motion.face) {
+    return null;
+  }
+
+  const cheekAnchors = [motion.face.leftCheek, motion.face.rightCheek].filter(Boolean) as Vec2[];
+  for (const grabber of pinchingHands) {
+    if (!grabber.pinchPoint) continue;
+    const cheek = cheekAnchors
+      .map((anchor) => ({ anchor, distance: distance(anchor, grabber.pinchPoint as Vec2) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    if (cheek && cheek.distance < GUM_CHEEK_ATTACH_RADIUS) {
+      return {
+        anchor: cheek.anchor,
+        tip: grabber.pinchPoint,
+        label: "cheek",
+        strength: grabber.hand.pinch
+      };
+    }
+  }
+
+  return null;
+};
+
+const easeSpring = (t: number) => {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return 1 - Math.exp(-2.2 * t) * Math.cos(2.4 * Math.PI * t);
+};
+
+const drawGumTube = (
+  ctx: CanvasRenderingContext2D,
+  anchor: Vec2,
+  tip: Vec2,
+  width: number,
+  height: number,
+  amount: number,
+  strength: number,
+  label: "hand" | "cheek"
+) => {
+  const start = pointToCanvas(anchor, width, height);
+  const end = pointToCanvas(tip, width, height);
+  const length = distance(start, end);
+  if (length < 8) return;
+
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const invLength = 1 / Math.max(0.001, length);
+  const normal = { x: -dy * invLength, y: dx * invLength };
+  const handedBulge = label === "cheek" ? -1 : 1;
+  const bulge = Math.min(length * 0.16, 72 * amount) * handedBulge;
+  const control = {
+    x: (start.x + end.x) / 2 + normal.x * bulge,
+    y: (start.y + end.y) / 2 + normal.y * bulge
+  };
+  const thinning = 1 / (1 + length / 540);
+  const rootWidth = Math.max(6, 34 * amount * thinning * (0.78 + strength * 0.32));
+  const tipWidth = Math.max(4, rootWidth * 0.38);
+  const samples = 30;
+  const left: Vec2[] = [];
+  const right: Vec2[] = [];
+  const centers: Vec2[] = [];
+
+  for (let i = 0; i <= samples; i += 1) {
+    const t = i / samples;
+    const a = mixPoint(start, control, t);
+    const b = mixPoint(control, end, t);
+    const center = mixPoint(a, b, t);
+    const nextT = Math.min(1, t + 1 / samples);
+    const nextA = mixPoint(start, control, nextT);
+    const nextB = mixPoint(control, end, nextT);
+    const nextCenter = mixPoint(nextA, nextB, nextT);
+    const tangent = {
+      x: nextCenter.x - center.x || dx,
+      y: nextCenter.y - center.y || dy
+    };
+    const tangentLength = Math.max(0.001, Math.hypot(tangent.x, tangent.y));
+    const localNormal = { x: -tangent.y / tangentLength, y: tangent.x / tangentLength };
+    const tubeWidth = rootWidth + (tipWidth - rootWidth) * t;
+    left.push({ x: center.x + localNormal.x * tubeWidth, y: center.y + localNormal.y * tubeWidth });
+    right.push({ x: center.x - localNormal.x * tubeWidth, y: center.y - localNormal.y * tubeWidth });
+    centers.push(center);
+  }
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.shadowColor = "rgba(255, 76, 112, 0.55)";
+  ctx.shadowBlur = Math.max(12, rootWidth * 1.2);
+  ctx.beginPath();
+  [...left, ...right.reverse()].forEach((point, index) => {
+    if (index === 0) {
+      ctx.moveTo(point.x, point.y);
+    } else {
+      ctx.lineTo(point.x, point.y);
+    }
+  });
+  ctx.closePath();
+  ctx.fillStyle = label === "cheek" ? "rgba(255, 104, 138, 0.88)" : "rgba(237, 62, 88, 0.9)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(116, 18, 34, 0.68)";
+  ctx.lineWidth = Math.max(2, rootWidth * 0.12);
+  ctx.stroke();
+
+  ctx.shadowBlur = 0;
+  ctx.globalCompositeOperation = "screen";
+  ctx.strokeStyle = "rgba(255, 226, 214, 0.58)";
+  ctx.lineWidth = Math.max(2, tipWidth * 0.42);
+  ctx.beginPath();
+  centers.forEach((center, index) => {
+    const highlight = {
+      x: center.x + normal.x * rootWidth * 0.28,
+      y: center.y + normal.y * rootWidth * 0.28
+    };
+    if (index === 0) {
+      ctx.moveTo(highlight.x, highlight.y);
+    } else {
+      ctx.lineTo(highlight.x, highlight.y);
+    }
+  });
+  ctx.stroke();
+
+  ctx.globalCompositeOperation = "source-over";
+  ctx.fillStyle = "rgba(255, 214, 92, 0.92)";
+  ctx.shadowColor = "rgba(255, 214, 92, 0.62)";
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(start.x, start.y, Math.max(5, rootWidth * 0.24), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+};
+
+const drawGumStretch = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
+  const now = motion.timestamp;
+  const target = getBestGumStretchTarget(motion);
+  const runtime = gumStretchRuntimes.get(ctx.canvas) ?? {
+    phase: "idle",
+    anchor: { x: 0.5, y: 0.5 },
+    tip: { x: 0.5, y: 0.5 },
+    smoothedTip: { x: 0.5, y: 0.5 },
+    snapStartTip: { x: 0.5, y: 0.5 },
+    snapStartedAt: 0,
+    targetLabel: "hand" as const
+  };
+
+  const anyPinchHeld = motion.hands.some((hand) => hand.pinch > GUM_PINCH_RELEASE);
+  if (target) {
+    const wasStretching = runtime.phase === "stretching";
+    runtime.phase = "stretching";
+    runtime.anchor = target.anchor;
+    runtime.tip = target.tip;
+    runtime.smoothedTip = wasStretching ? mixPoint(runtime.smoothedTip, target.tip, 0.48) : target.tip;
+    runtime.targetLabel = target.label;
+  } else if (runtime.phase === "stretching" && !anyPinchHeld) {
+    runtime.phase = "snapping";
+    runtime.snapStartedAt = now;
+    runtime.snapStartTip = runtime.smoothedTip;
+  }
+
+  if (runtime.phase === "stretching") {
+    drawGumTube(ctx, runtime.anchor, runtime.smoothedTip, width, height, amount, target?.strength ?? 1, runtime.targetLabel);
+  } else if (runtime.phase === "snapping") {
+    const progress = clamp((now - runtime.snapStartedAt) / GUM_SNAP_DURATION, 0, 1);
+    const eased = easeSpring(progress);
+    const snapTip = mixPoint(runtime.snapStartTip, runtime.anchor, eased);
+    drawGumTube(ctx, runtime.anchor, snapTip, width, height, amount, 1 - progress * 0.35, runtime.targetLabel);
+    if (progress >= 1) {
+      runtime.phase = "idle";
+    }
+  }
+
+  gumStretchRuntimes.set(ctx.canvas, runtime);
 };
 
 const drawContourBands = (ctx: CanvasRenderingContext2D, motion: MotionFrame, width: number, height: number, amount: number) => {
@@ -2083,6 +2345,9 @@ export const renderFrame = (
   }
   if ((shouldRunGestureEffects && motion.gestures.pinch) || options.selectedEffect === "warp") {
     drawPinchWarp(ctx, motion, width, height, gestureAmount);
+  }
+  if (options.selectedEffect === "gumstretch") {
+    drawGumStretch(ctx, motion, width, height, gestureAmount);
   }
   if ((shouldRunGestureEffects && motion.gestures.openPalm) || options.selectedEffect === "bloom") {
     drawPalmBloom(ctx, motion, width, height, gestureAmount);

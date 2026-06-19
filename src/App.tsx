@@ -205,26 +205,7 @@ const FACE_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task";
 
 const effects = [
-  { id: "auto", label: "Auto", icon: Sparkles },
-  { id: "cyberbot", label: "Cyber Bot", icon: Bot },
-  { id: "popidol", label: "Pop Idol", icon: Crown },
-  { id: "comic", label: "Comic Hero", icon: Star },
-  { id: "toonkit", label: "Toon Kit", icon: Smile },
-  { id: "bigbuck", label: "Big Buck", icon: Rabbit },
-  { id: "sintel", label: "Sintel", icon: Swords },
-  { id: "spring", label: "Spring", icon: Sprout },
-  { id: "spritefright", label: "Sprite Fright", icon: Trees },
-  { id: "caminandes", label: "Caminandes", icon: MountainSnow },
-  { id: "mirror", label: "Mirror", icon: FlipHorizontal2 },
-  { id: "edge", label: "Edges", icon: ScanLine },
-  { id: "leaves", label: "Leaves", icon: Leaf },
-  { id: "fire", label: "Fire", icon: Flame },
-  { id: "stickers", label: "Stickers", icon: Star },
-  { id: "melt", label: "Melt", icon: Waves },
-  { id: "contour", label: "Contour", icon: ScanFace },
-  { id: "warp", label: "Warp", icon: Aperture },
-  { id: "orbit", label: "Orbit", icon: Orbit },
-  { id: "bloom", label: "Bloom", icon: Fingerprint }
+  { id: "gumstretch", label: "Gum Stretch", icon: Hand }
 ];
 
 const workspaceTabs: Array<{ id: WorkspaceTab; label: string }> = [
@@ -598,7 +579,7 @@ const createGestureActionRoute = (
   trigger,
   actionType,
   shaderParameterId: "",
-  effectId: "auto",
+  effectId: "gumstretch",
   outputMode: "shaderWire",
   min: 0,
   max: 1,
@@ -616,7 +597,7 @@ const createDefaultGestureActionMatrix = (): GestureActionRoute[] => [
   },
   {
     ...createGestureActionRoute("mouth-open-effect", "mouthOpen", "started", "effect"),
-    effectId: "bloom"
+    effectId: "gumstretch"
   },
   {
     ...createGestureActionRoute("eyes-closed-output", "eyesClosed", "started", "outputMode"),
@@ -1167,12 +1148,12 @@ export function App() {
   const compositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
-    selectedEffect: "auto"
+    selectedEffect: "gumstretch"
   });
   const outputCompositorOptionsRef = useRef<CompositorOptions>({
     showRig: true,
     effectAmount: 0.82,
-    selectedEffect: "auto",
+    selectedEffect: "gumstretch",
     watermark: {
       enabled: isDemoEdition,
       label: demoWatermarkLabel,
@@ -1206,7 +1187,7 @@ export function App() {
   const [outputCompositionMode, setOutputCompositionMode] = useState<OutputCompositionMode>("shaderWire");
   const [outputPerformanceMode, setOutputPerformanceMode] = useState<OutputPerformanceMode>("max");
   const [effectAmount, setEffectAmount] = useState(0.82);
-  const [selectedEffect, setSelectedEffect] = useState("auto");
+  const [selectedEffect, setSelectedEffect] = useState("gumstretch");
   const [outputTarget, setOutputTarget] = useState<OutputTarget>(getPreferredOutput);
   const [isOutputStreaming, setIsOutputStreaming] = useState(false);
   const [outputError, setOutputError] = useState("");
