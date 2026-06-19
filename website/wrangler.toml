@@ -16,7 +16,7 @@ FROM_EMAIL = "INFINIGHTCapture <downloads@infinightcapture.com>"
 SUPPORT_EMAIL = "hello@infinightcapture.com"
 DEMO_RELEASE_REPO = "morganlavery/INFINIGHTCapture"
 DEMO_RELEASE_TAG = "v0.1.0"
-DEMO_MAC_ASSET_NAME = "INFINIGHTCapture-0.1.0-arm64.dmg"
+DEMO_MAC_ASSET_NAME = "INFINIGHTCapture-Demo-0.1.0-mac-arm64.dmg"
 DEMO_WINDOWS_ASSET_NAME = "INFINIGHTCapture-Demo-Setup-0.1.0-win-x64.exe"
 
 [[r2_buckets]]
